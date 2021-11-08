@@ -284,6 +284,51 @@ func main() {
 }
 ```
 
+To enable support of UUID in msgpack with [google/uuid](https://github.com/google/uuid),
+import tarantool/uuid submodule.
+```go
+package main
+
+import (
+	"log"
+	"time"
+
+	"github.com/tarantool/go-tarantool"
+	_ "github.com/tarantool/go-tarantool/uuid"
+	"github.com/google/uuid"
+)
+
+func main() {
+	server := "127.0.0.1:3013"
+	opts := tarantool.Opts{
+		Timeout:       500 * time.Millisecond,
+		Reconnect:     1 * time.Second,
+		MaxReconnects: 3,
+		User:          "test",
+		Pass:          "test",
+	}
+	client, err := tarantool.Connect(server, opts)
+	if err != nil {
+		log.Fatalf("Failed to connect: %s", err.Error())
+	}
+
+	spaceNo := uint32(524)
+	indexNo := uint32(0)
+
+	id, uuidErr := uuid.Parse("c8f0fa1f-da29-438c-a040-393f1126ad39")
+	if uuidErr != nil {
+		t.Errorf("Failed to prepare uuid: %s", uuidErr)
+	}
+
+	resp, err := conn.Replace(space, index, 0, 1, IterEq, []interface{}{ id })
+
+	log.Println("UUID tuple replace")
+	log.Println("Error", err)
+	log.Println("Code", resp.Code)
+	log.Println("Data", resp.Data)
+}
+```
+
 ## Schema
 
 ```go
