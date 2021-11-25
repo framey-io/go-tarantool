@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/tarantool/go-tarantool"
+	"github.com/framey-io/go-tarantool"
 )
 
 type Tuple struct {
@@ -148,10 +148,10 @@ func Example() {
 	fmt.Println("Update Code", resp.Code)
 	fmt.Println("Update Data", resp.Data)
 
-	// select just one tuple with primay key { 15 }
-	resp, err = client.Select(spaceNo, indexNo, 0, 1, tarantool.IterEq, []interface{}{uint(15)})
+	// select just one tuple with primay key { 12 }
+	resp, err = client.Select(spaceNo, indexNo, 0, 1, tarantool.IterEq, []interface{}{uint(12)})
 	// or
-	// resp, err = client.Select("test", "primary", 0, 1, tarantool.IterEq, tarantool.UintKey{15})
+	// resp, err = client.Select("test", "primary", 0, 1, tarantool.IterEq, tarantool.UintKey{12})
 	fmt.Println("Select Error", err)
 	fmt.Println("Select Code", resp.Code)
 	fmt.Println("Select Data", resp.Data)
@@ -194,7 +194,7 @@ func Example() {
 	// Insert Error <nil>
 	// Insert Code 0
 	// Insert Data [[10 test one]]
-	// Insert Error Duplicate key exists in unique index 'primary' in space 'test' (0x3)
+	// Insert Error Duplicate key exists in unique index "primary" in space "test" with old tuple - [10, "test", "one"] and new tuple - [10, "test", "one"] (0x3)
 	// Insert Code 3
 	// Insert Data []
 	// Delete Error <nil>
@@ -208,7 +208,7 @@ func Example() {
 	// Update Data [[13 4]]
 	// Select Error <nil>
 	// Select Code 0
-	// Select Data [[15 val 15 bla]]
+	// Select Data [[12 test twelve]]
 	// Call17 Error <nil>
 	// Call17 Code 0
 	// Call17 Data [2]
@@ -220,5 +220,5 @@ func Example() {
 	// Fut 1 Error <nil>
 	// Fut 1 Data [[13 4]]
 	// Fut 2 Error <nil>
-	// Fut 2 Data [[15 val 15 bla]]
+	// Fut 2 Data []
 }

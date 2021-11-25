@@ -4,7 +4,7 @@ import (
 	"errors"
 	"time"
 
-	"gopkg.in/vmihailenco/msgpack.v2"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 // Future is a handle for asynchronous request
@@ -15,6 +15,7 @@ type Future struct {
 	resp        *Response
 	err         error
 	ready       chan struct{}
+	done        bool
 	next        *Future
 }
 
@@ -25,27 +26,27 @@ func (conn *Connection) Ping() (resp *Response, err error) {
 }
 
 func (req *Future) fillSearch(enc *msgpack.Encoder, spaceNo, indexNo uint32, key interface{}) error {
-	enc.EncodeUint64(KeySpaceNo)
-	enc.EncodeUint64(uint64(spaceNo))
-	enc.EncodeUint64(KeyIndexNo)
-	enc.EncodeUint64(uint64(indexNo))
-	enc.EncodeUint64(KeyKey)
+	enc.EncodeUint(KeySpaceNo)
+	enc.EncodeUint32(spaceNo)
+	enc.EncodeUint(KeyIndexNo)
+	enc.EncodeUint32(indexNo)
+	enc.EncodeUint(KeyKey)
 	return enc.Encode(key)
 }
 
 func (req *Future) fillIterator(enc *msgpack.Encoder, offset, limit, iterator uint32) {
-	enc.EncodeUint64(KeyIterator)
-	enc.EncodeUint64(uint64(iterator))
-	enc.EncodeUint64(KeyOffset)
-	enc.EncodeUint64(uint64(offset))
-	enc.EncodeUint64(KeyLimit)
-	enc.EncodeUint64(uint64(limit))
+	enc.EncodeUint(KeyIterator)
+	enc.EncodeUint32(iterator)
+	enc.EncodeUint(KeyOffset)
+	enc.EncodeUint32(offset)
+	enc.EncodeUint(KeyLimit)
+	enc.EncodeUint32(limit)
 }
 
 func (req *Future) fillInsert(enc *msgpack.Encoder, spaceNo uint32, tuple interface{}) error {
-	enc.EncodeUint64(KeySpaceNo)
-	enc.EncodeUint64(uint64(spaceNo))
-	enc.EncodeUint64(KeyTuple)
+	enc.EncodeUint(KeySpaceNo)
+	enc.EncodeUint32(spaceNo)
+	enc.EncodeUint(KeyTuple)
 	return enc.Encode(tuple)
 }
 
@@ -129,7 +130,7 @@ type single struct {
 func (s *single) DecodeMsgpack(d *msgpack.Decoder) error {
 	var err error
 	var len int
-	if len, err = d.DecodeSliceLen(); err != nil {
+	if len, err = d.DecodeArrayLen(); err != nil {
 		return err
 	}
 	if s.found = len >= 1; !s.found {
@@ -281,7 +282,7 @@ func (conn *Connection) UpdateAsync(space, index interface{}, key, ops interface
 		if err := future.fillSearch(enc, spaceNo, indexNo, key); err != nil {
 			return err
 		}
-		enc.EncodeUint64(KeyTuple)
+		enc.EncodeUint(KeyTuple)
 		return enc.Encode(ops)
 	})
 }
@@ -296,13 +297,13 @@ func (conn *Connection) UpsertAsync(space interface{}, tuple interface{}, ops in
 	}
 	return future.send(conn, func(enc *msgpack.Encoder) error {
 		enc.EncodeMapLen(3)
-		enc.EncodeUint64(KeySpaceNo)
+		enc.EncodeUint(KeySpaceNo)
 		enc.EncodeUint64(uint64(spaceNo))
-		enc.EncodeUint64(KeyTuple)
+		enc.EncodeUint(KeyTuple)
 		if err := enc.Encode(tuple); err != nil {
 			return err
 		}
-		enc.EncodeUint64(KeyDefTuple)
+		enc.EncodeUint(KeyDefTuple)
 		return enc.Encode(ops)
 	})
 }
@@ -385,6 +386,7 @@ func (fut *Future) send(conn *Connection, body func(*msgpack.Encoder) error) *Fu
 
 func (fut *Future) markReady(conn *Connection) {
 	close(fut.ready)
+	fut.done = true
 	if conn.rlimit != nil {
 		<-conn.rlimit
 	}
