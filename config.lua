@@ -1,12 +1,14 @@
 box.cfg{
     listen = 3013,
-    wal_dir='xlog',
-    snap_dir='snap',
+    work_dir = '/tmp/tarantool_data/3013',
+    memtx_dir = '/tmp/tarantool_data/3013/memtx',
+    wal_dir = '/tmp/tarantool_data/3013/wal',
+    pid_file = "tarantool3013.pid",
 }
 
 box.once("init", function()
 local s = box.schema.space.create('test', {
-    id = 512,
+    id = 513,
     if_not_exists = true,
 })
 s:create_index('primary', {type = 'tree', parts = {1, 'uint'}, if_not_exists = true})
@@ -44,11 +46,22 @@ st:truncate()
 box.schema.func.create('box.info')
 box.schema.func.create('simple_incr')
 
+box.schema.user.passwd('pass')
 -- auth testing: access control
 box.schema.user.create('test', {password = 'test'})
 box.schema.user.grant('test', 'execute', 'universe')
 box.schema.user.grant('test', 'read,write', 'space', 'test')
 box.schema.user.grant('test', 'read,write', 'space', 'schematest')
+
+box.execute([[CREATE TABLE IF NOT EXISTS test_table (
+                    id VARCHAR(40) primary key ,
+                    name VARCHAR(100) NOT NULL,
+                    type int NOT NULL
+                    );]])
+
+box.execute([[CREATE UNIQUE INDEX IF NOT EXISTS t_idx_1 ON test_table2 (name, type);]])
+
+box.schema.user.grant('test', 'read,write', 'space', 'TEST_TABLE')
 end)
 
 function simple_incr(a)
