@@ -3,7 +3,7 @@ package tarantool
 import (
 	"fmt"
 
-	"gopkg.in/vmihailenco/msgpack.v2"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 type Response struct {
@@ -64,10 +64,16 @@ func (resp *Response) decodeHeader(d *msgpack.Decoder) (err error) {
 	return nil
 }
 
+func decodeMap(dec *msgpack.Decoder) (interface{}, error) {
+	return dec.DecodeUntypedMap()
+}
+
 func (resp *Response) decodeBody() (err error) {
 	if resp.buf.Len() > 2 {
 		var l int
 		d := msgpack.NewDecoder(&resp.buf)
+		d.SetMapDecoder(decodeMap)
+		d.UseLooseInterfaceDecoding(true)
 		if l, err = d.DecodeMapLen(); err != nil {
 			return err
 		}
@@ -85,6 +91,22 @@ func (resp *Response) decodeBody() (err error) {
 				}
 				if resp.Data, ok = res.([]interface{}); !ok {
 					return fmt.Errorf("result is not array: %v", res)
+				}
+			case KeySqlStmtId:
+				var stmtId uint64
+				if stmtId, err = d.DecodeUint64(); err != nil {
+					return err
+				}
+				resp.Data = append(resp.Data, stmtId)
+			case KeySqlDMLResponseData:
+				var res interface{}
+				if res, err = d.DecodeUntypedMap(); err != nil {
+					return err
+				}
+				if resMap, ok := res.(map[interface{}]interface{}); ok {
+					for _, v := range resMap {
+						resp.Data = append(resp.Data, v)
+					}
 				}
 			case KeyError:
 				if resp.Error, err = d.DecodeString(); err != nil {
@@ -108,6 +130,8 @@ func (resp *Response) decodeBodyTyped(res interface{}) (err error) {
 	if resp.buf.Len() > 0 {
 		var l int
 		d := msgpack.NewDecoder(&resp.buf)
+		d.SetMapDecoder(decodeMap)
+		d.UseLooseInterfaceDecoding(true)
 		if l, err = d.DecodeMapLen(); err != nil {
 			return err
 		}

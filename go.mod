@@ -1,10 +1,10 @@
-module github.com/tarantool/go-tarantool
+module github.com/framey-io/go-tarantool
 
-go 1.11
+go 1.17
 
 require (
-	github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e // indirect
-	google.golang.org/appengine v1.6.7 // indirect
-	gopkg.in/check.v1 v1.0.0-20200227125254-8fa46927fb4f // indirect
-	gopkg.in/vmihailenco/msgpack.v2 v2.9.2
+	github.com/cenkalti/backoff/v4 v4.1.2
+	github.com/vmihailenco/msgpack/v5 v5.3.5
 )
+
+require github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect

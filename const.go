@@ -11,6 +11,8 @@ const (
 	EvalRequest      = 8
 	UpsertRequest    = 9
 	Call17Request    = 10
+	ExecuteRequest   = 11
+	PrepareRequest   = 13
 	PingRequest      = 64
 	SubscribeRequest = 66
 
@@ -29,6 +31,13 @@ const (
 	KeyDefTuple     = 0x28
 	KeyData         = 0x30
 	KeyError        = 0x31
+
+	KeySqlText        = 0x40
+	KeySqlBind        = 0x41
+	KeySqlStmtId      = 0x43
+	KeyPrepareOptions = 0x2b
+	/* DML - any operation that manipulates/changes data */
+	KeySqlDMLResponseData = 0x42
 
 	// https://github.com/fl00r/go-tarantool-1.6/issues/2
 
