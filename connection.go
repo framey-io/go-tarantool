@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"gopkg.in/vmihailenco/msgpack.v2"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 const requestsMap = 128
@@ -132,6 +132,9 @@ type Connection struct {
 	state   uint32
 	dec     *msgpack.Decoder
 	lenbuf  [PacketLengthBytes]byte
+
+	sqlPreparedStatementCache sync.Map //map[string]uint64
+	cacheMx                   sync.Mutex
 }
 
 var _ = Connector(&Connection{}) // check compatibility with connector interface
@@ -228,13 +231,15 @@ type Opts struct {
 // - If opts.Reconnect is non-zero, then error will be returned only if authorization// fails. But if Tarantool is not reachable, then it will attempt to reconnect later
 // and will not end attempts on authorization failures.
 func Connect(addr string, opts Opts) (conn *Connection, err error) {
+	dec := msgpack.NewDecoder(&smallBuf{})
+	dec.UseLooseInterfaceDecoding(true)
 	conn = &Connection{
 		addr:      addr,
 		requestId: 0,
 		Greeting:  &Greeting{},
 		control:   make(chan struct{}),
 		opts:      opts,
-		dec:       msgpack.NewDecoder(&smallBuf{}),
+		dec:       dec,
 	}
 	maxprocs := uint32(runtime.GOMAXPROCS(-1))
 	if conn.opts.Concurrency == 0 || conn.opts.Concurrency > maxprocs*128 {
@@ -270,8 +275,8 @@ func Connect(addr string, opts Opts) (conn *Connection, err error) {
 		ter, ok := err.(Error)
 		if conn.opts.Reconnect <= 0 {
 			return nil, err
-		} else if ok && (ter.Code == ErrNoSuchUser ||
-			ter.Code == ErrPasswordMismatch) {
+		} else if ok && (ter.Code == ER_NO_SUCH_USER ||
+			ter.Code == ER_PASSWORD_MISMATCH) {
 			/* reported auth errors immediatly */
 			return nil, err
 		} else {
@@ -433,7 +438,9 @@ func (conn *Connection) writeAuthRequest(w *bufio.Writer, scramble []byte) (err 
 		requestCode: AuthRequest,
 	}
 	var packet smallWBuf
-	err = request.pack(&packet, msgpack.NewEncoder(&packet), func(enc *msgpack.Encoder) error {
+	enc := msgpack.NewEncoder(&packet)
+	enc.UseCompactInts(true)
+	err = request.pack(&packet, enc, func(enc *msgpack.Encoder) error {
 		return enc.Encode(map[uint32]interface{}{
 			KeyUserName: conn.opts.User,
 			KeyTuple:    []interface{}{string("chap-sha1"), string(scramble)},
@@ -535,6 +542,23 @@ func (conn *Connection) closeConnection(neterr error, forever bool) (err error) 
 		}
 	}
 	return
+}
+
+func (conn *Connection) InUseNow() bool {
+	for i := range conn.shard {
+		requests := &conn.shard[i].requests
+		for pos := range requests {
+			fut := requests[pos].first
+			for fut != nil {
+				if fut.ready != nil && !fut.done {
+					return true
+				}
+				fut = fut.next
+			}
+		}
+	}
+
+	return false
 }
 
 func (conn *Connection) reconnect(neterr error, c net.Conn) {
@@ -721,6 +745,8 @@ func (conn *Connection) putFuture(fut *Future, body func(*msgpack.Encoder) error
 	if shard.buf.Cap() == 0 {
 		shard.buf.b = make([]byte, 0, 128)
 		shard.enc = msgpack.NewEncoder(&shard.buf)
+		shard.enc.SetOmitEmpty(true)
+		shard.enc.UseCompactInts(true)
 	}
 	blen := shard.buf.Len()
 	if err := fut.pack(&shard.buf, shard.enc, body); err != nil {

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/tarantool/go-tarantool"
-	"gopkg.in/vmihailenco/msgpack.v2"
+	. "github.com/framey-io/go-tarantool"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 type Member struct {
@@ -24,16 +24,16 @@ type Tuple2 struct {
 }
 
 func (m *Member) EncodeMsgpack(e *msgpack.Encoder) error {
-	e.EncodeSliceLen(2)
+	e.EncodeArrayLen(2)
 	e.EncodeString(m.Name)
-	e.EncodeUint(m.Val)
+	e.EncodeUint(uint64(m.Val))
 	return nil
 }
 
 func (m *Member) DecodeMsgpack(d *msgpack.Decoder) error {
 	var err error
 	var l int
-	if l, err = d.DecodeSliceLen(); err != nil {
+	if l, err = d.DecodeArrayLen(); err != nil {
 		return err
 	}
 	if l != 2 {
@@ -49,8 +49,8 @@ func (m *Member) DecodeMsgpack(d *msgpack.Decoder) error {
 }
 
 func (c *Tuple2) EncodeMsgpack(e *msgpack.Encoder) error {
-	e.EncodeSliceLen(3)
-	e.EncodeUint(c.Cid)
+	e.EncodeArrayLen(3)
+	e.EncodeUint(uint64(c.Cid))
 	e.EncodeString(c.Orig)
 	e.Encode(c.Members)
 	return nil
@@ -59,7 +59,7 @@ func (c *Tuple2) EncodeMsgpack(e *msgpack.Encoder) error {
 func (c *Tuple2) DecodeMsgpack(d *msgpack.Decoder) error {
 	var err error
 	var l int
-	if l, err = d.DecodeSliceLen(); err != nil {
+	if l, err = d.DecodeArrayLen(); err != nil {
 		return err
 	}
 	if l != 3 {
@@ -71,7 +71,7 @@ func (c *Tuple2) DecodeMsgpack(d *msgpack.Decoder) error {
 	if c.Orig, err = d.DecodeString(); err != nil {
 		return err
 	}
-	if l, err = d.DecodeSliceLen(); err != nil {
+	if l, err = d.DecodeArrayLen(); err != nil {
 		return err
 	}
 	c.Members = make([]Member, l)
@@ -82,14 +82,14 @@ func (c *Tuple2) DecodeMsgpack(d *msgpack.Decoder) error {
 }
 
 var server = "127.0.0.1:3013"
-var spaceNo = uint32(512)
+var spaceNo = uint32(513)
 var spaceName = "test"
 var indexNo = uint32(0)
 var indexName = "primary"
 var opts = Opts{
 	Timeout: 500 * time.Millisecond,
-	User:    "test",
-	Pass:    "test",
+	User:    "admin",
+	Pass:    "pass",
 	//Concurrency: 32,
 	//RateLimit: 4*1024,
 }
@@ -426,7 +426,7 @@ func TestClient(t *testing.T) {
 		if len(tpl) != 3 {
 			t.Errorf("Unexpected body of Insert (tuple len)")
 		}
-		if id, ok := tpl[0].(uint64); !ok || id != 1 {
+		if id, ok := tpl[0].(int64); !ok || id != 1 {
 			t.Errorf("Unexpected body of Insert (0)")
 		}
 		if h, ok := tpl[1].(string); !ok || h != "hello" {
@@ -435,7 +435,7 @@ func TestClient(t *testing.T) {
 	}
 	//resp, err = conn.Insert(spaceNo, []interface{}{uint(1), "hello", "world"})
 	resp, err = conn.Insert(spaceNo, &Tuple{Id: 1, Msg: "hello", Name: "world"})
-	if tntErr, ok := err.(Error); !ok || tntErr.Code != ErrTupleFound {
+	if tntErr, ok := err.(Error); !ok || tntErr.Code != ER_TUPLE_FOUND {
 		t.Errorf("Expected ErrTupleFound but got: %v", err)
 	}
 	if len(resp.Data) != 0 {
@@ -459,7 +459,7 @@ func TestClient(t *testing.T) {
 		if len(tpl) != 3 {
 			t.Errorf("Unexpected body of Delete (tuple len)")
 		}
-		if id, ok := tpl[0].(uint64); !ok || id != 1 {
+		if id, ok := tpl[0].(int64); !ok || id != 1 {
 			t.Errorf("Unexpected body of Delete (0)")
 		}
 		if h, ok := tpl[1].(string); !ok || h != "hello" {
@@ -501,7 +501,7 @@ func TestClient(t *testing.T) {
 		if len(tpl) != 3 {
 			t.Errorf("Unexpected body of Replace (tuple len)")
 		}
-		if id, ok := tpl[0].(uint64); !ok || id != 2 {
+		if id, ok := tpl[0].(int64); !ok || id != 2 {
 			t.Errorf("Unexpected body of Replace (0)")
 		}
 		if h, ok := tpl[1].(string); !ok || h != "hi" {
@@ -526,7 +526,7 @@ func TestClient(t *testing.T) {
 		if len(tpl) != 2 {
 			t.Errorf("Unexpected body of Update (tuple len)")
 		}
-		if id, ok := tpl[0].(uint64); !ok || id != 2 {
+		if id, ok := tpl[0].(int64); !ok || id != 2 {
 			t.Errorf("Unexpected body of Update (0)")
 		}
 		if h, ok := tpl[1].(string); !ok || h != "bye" {
@@ -572,7 +572,7 @@ func TestClient(t *testing.T) {
 	if tpl, ok := resp.Data[0].([]interface{}); !ok {
 		t.Errorf("Unexpected body of Select")
 	} else {
-		if id, ok := tpl[0].(uint64); !ok || id != 10 {
+		if id, ok := tpl[0].(int64); !ok || id != 10 {
 			t.Errorf("Unexpected body of Select (0)")
 		}
 		if h, ok := tpl[1].(string); !ok || h != "val 10" {
@@ -664,12 +664,12 @@ func TestClient(t *testing.T) {
 
 	// Call vs Call17
 	resp, err = conn.Call("simple_incr", []interface{}{1})
-	if resp.Data[0].([]interface{})[0].(uint64) != 2 {
+	if resp.Data[0].([]interface{})[0].(int64) != 2 {
 		t.Errorf("result is not {{1}} : %v", resp.Data)
 	}
 
 	resp, err = conn.Call17("simple_incr", []interface{}{1})
-	if resp.Data[0].(uint64) != 2 {
+	if resp.Data[0].(int64) != 2 {
 		t.Errorf("result is not {{1}} : %v", resp.Data)
 	}
 
@@ -684,7 +684,7 @@ func TestClient(t *testing.T) {
 	if len(resp.Data) < 1 {
 		t.Errorf("Response.Data is empty after Eval")
 	}
-	val := resp.Data[0].(uint64)
+	val := resp.Data[0].(int64)
 	if val != 11 {
 		t.Errorf("5 + 6 == 11, but got %v", val)
 	}
@@ -1002,6 +1002,91 @@ func TestComplexStructs(t *testing.T) {
 
 	if tuple.Cid != tuples[0].Cid || len(tuple.Members) != len(tuples[0].Members) || tuple.Members[1].Name != tuples[0].Members[1].Name {
 		t.Errorf("Failed to selectTyped: incorrect data")
+		return
+	}
+}
+
+type TestTable struct {
+	/* instruct msgpack to pack this struct as array,
+	 * so no custom packer is needed */
+	_msgpack struct{} `msgpack:",asArray"`
+	Id       string
+	Name     string
+	Type     int
+}
+
+func TestPrepareExecute(t *testing.T) {
+	var err error
+	var conn *Connection
+
+	conn, err = Connect(server, opts)
+	if err != nil {
+		t.Errorf("Failed to connect: %s", err.Error())
+		return
+	}
+	if conn == nil {
+		t.Errorf("conn is nil after Connect")
+		return
+	}
+	defer conn.Close()
+
+	var s []TestTable
+	selectSql := "SELECT * FROM test_table where name = :name and type = :type"
+	if err = conn.PrepareExecuteTyped(selectSql, map[string]interface{}{"name": "a", "type": 2}, &s); err != nil {
+		t.Errorf("Failed to PrepareExecute1: %s", err.Error())
+		return
+	}
+	if len(s) != 0 {
+		t.Errorf("Expected no records")
+		return
+	}
+	insertSql := "insert into test_table (id, name, type) values (:id,:name,:type)"
+
+	if r, err := conn.PrepareExecute(insertSql, map[string]interface{}{"id": "id1", "name": "a", "type": 2}); err != nil {
+		t.Errorf("Failed to PrepareExecute3: %s", err.Error())
+		return
+	} else if r.Tuples()[0][0].(int64) != 1 {
+		t.Errorf("PrepareExecute3: Expected 1 but got %v", r.Tuples()[0][0].(int64))
+		return
+	}
+
+	updateSql := "update test_table set name = :name where id = :id"
+
+	if r, err := conn.PrepareExecute(updateSql, map[string]interface{}{"id": "id1", "name": "b"}); err != nil {
+		t.Errorf("Failed to PrepareExecute4: %s", err.Error())
+		return
+	} else if r.Tuples()[0][0].(int64) != 1 {
+		t.Errorf("PrepareExecute4: Expected 1 but got %v", r.Tuples()[0][0].(int64))
+		return
+	}
+
+	if err = conn.PrepareExecuteTyped(selectSql, map[string]interface{}{"name": "b", "type": 2}, &s); err != nil {
+		t.Errorf("Failed to PrepareExecute4: %s", err.Error())
+		return
+	}
+
+	if len(s) != 1 || s[0].Id != "id1" || s[0].Name != "b" || s[0].Type != 2 {
+		t.Errorf("Expected 1 record with id:id1, name:a, type:2")
+		return
+	}
+
+	deleteSql := "delete from test_table where name = :name"
+
+	if r, err := conn.PrepareExecute(deleteSql, map[string]interface{}{"name": "b"}); err != nil {
+		t.Errorf("Failed to PrepareExecute5: %s", err.Error())
+		return
+	} else if r.Tuples()[0][0].(int64) != 1 {
+		t.Errorf("PrepareExecute5: Expected 1 but got %v", r.Tuples()[0][0].(int64))
+		return
+	}
+
+	var s2 []TestTable
+	if err = conn.PrepareExecuteTyped(selectSql, map[string]interface{}{"name": "b", "type": 2}, &s); err != nil {
+		t.Errorf("Failed to PrepareExecute6: %s", err.Error())
+		return
+	}
+	if len(s2) != 0 {
+		t.Errorf("Expected no records")
 		return
 	}
 }
