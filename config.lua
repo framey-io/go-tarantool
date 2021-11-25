@@ -1,7 +1,9 @@
 box.cfg{
     listen = 3013,
-    wal_dir='xlog',
-    snap_dir='snap',
+    work_dir = '/tmp/tarantool_data/3013',
+    memtx_dir = '/tmp/tarantool_data/3013/memtx',
+    wal_dir = '/tmp/tarantool_data/3013/wal',
+    pid_file = "tarantool3013.pid",
 }
 
 box.once("init", function()
@@ -60,4 +62,3 @@ local console = require 'console'
 console.listen '0.0.0.0:33015'
 
 --box.schema.user.revoke('guest', 'read,write,execute', 'universe')
-

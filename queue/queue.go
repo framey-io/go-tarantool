@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/tarantool/go-tarantool"
-	msgpack "gopkg.in/vmihailenco/msgpack.v2"
+	"github.com/framey-io/go-tarantool"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 // Queue is a handle to tarantool queue's tube
@@ -326,7 +326,7 @@ type queueData struct {
 func (qd *queueData) DecodeMsgpack(d *msgpack.Decoder) error {
 	var err error
 	var l int
-	if l, err = d.DecodeSliceLen(); err != nil {
+	if l, err = d.DecodeArrayLen(); err != nil {
 		return err
 	}
 	if l > 1 {

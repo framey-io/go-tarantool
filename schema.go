@@ -75,7 +75,7 @@ func (conn *Connection) loadSchema() (err error) {
 		space.Id = uint32(row[0].(uint64))
 		space.Name = row[2].(string)
 		space.Engine = row[3].(string)
-		space.FieldsCount = uint32(row[4].(uint64))
+		space.FieldsCount = uint32(row[4].(int64))
 		if len(row) >= 6 {
 			switch row5 := row[5].(type) {
 			case string:
@@ -125,7 +125,7 @@ func (conn *Connection) loadSchema() (err error) {
 	for _, row := range resp.Data {
 		row := row.([]interface{})
 		index := new(Index)
-		index.Id = uint32(row[1].(uint64))
+		index.Id = uint32(row[1].(int64))
 		index.Name = row[2].(string)
 		index.Type = row[3].(string)
 		switch row[4].(type) {
@@ -155,10 +155,10 @@ func (conn *Connection) loadSchema() (err error) {
 				field := new(IndexField)
 				switch f := f.(type) {
 				case []interface{}:
-					field.Id = uint32(f[0].(uint64))
+					field.Id = uint32(f[0].(int64))
 					field.Type = f[1].(string)
 				case map[interface{}]interface{}:
-					field.Id = uint32(f["field"].(uint64))
+					field.Id = uint32(f["field"].(int64))
 					field.Type = f["type"].(string)
 				}
 				index.Fields = append(index.Fields, field)

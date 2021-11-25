@@ -1,206 +1,263 @@
 package multi
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"math/rand"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/tarantool/go-tarantool"
+	"github.com/framey-io/go-tarantool"
 )
 
-var server1 = "127.0.0.1:3013"
-var server2 = "127.0.0.1:3014"
-var connOpts = tarantool.Opts{
-	Timeout: 500 * time.Millisecond,
-	User:    "test",
-	Pass:    "test",
+func BenchmarkRoundRobinLb(b *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	connMulti := dummy2Writable2NonWritableCluster(ctx, cancel)
+
+	b.SetParallelism(100000)
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			if rand.Intn(2) == 1 {
+				if c := connMulti.roundRobinWritable(); c == nil {
+					panic("could not find connection")
+				}
+			} else {
+				if c := connMulti.roundRobinNonWritable(); c == nil {
+					panic("could not find connection")
+				}
+			}
+		}
+	})
 }
 
-var connOptsMulti = OptsMulti{
-	CheckTimeout:         1 * time.Second,
-	NodesGetFunctionName: "get_cluster_nodes",
-	ClusterDiscoveryTime: 3 * time.Second,
+func dummy2Writable2NonWritableCluster(ctx context.Context, cancel context.CancelFunc) *ConnectionMulti {
+	connMulti := &ConnectionMulti{
+		opts: OptsMulti{
+			CheckTimeout: time.Second,
+			Context:      ctx,
+			Cancel:       cancel,
+		},
+		lb: new(lb),
+	}
+	conns := make(map[string]*loadBalancedConnection)
+	conns["1"] = &loadBalancedConnection{
+		mx:        new(sync.RWMutex),
+		closeMx:   new(sync.RWMutex),
+		connectMx: new(sync.Mutex),
+		connMulti: connMulti,
+		addr:      "1",
+		_type:     writable,
+		delegate:  &tarantool.Connection{},
+	}
+	conns["2"] = &loadBalancedConnection{
+		mx:        new(sync.RWMutex),
+		closeMx:   new(sync.RWMutex),
+		connectMx: new(sync.Mutex),
+		connMulti: connMulti,
+		addr:      "2",
+		_type:     writable,
+		delegate:  &tarantool.Connection{},
+	}
+	conns["3"] = &loadBalancedConnection{
+		mx:        new(sync.RWMutex),
+		closeMx:   new(sync.RWMutex),
+		connectMx: new(sync.Mutex),
+		connMulti: connMulti,
+		addr:      "3",
+		_type:     nonWritable,
+		delegate:  &tarantool.Connection{},
+	}
+	conns["4"] = &loadBalancedConnection{
+		mx:        new(sync.RWMutex),
+		closeMx:   new(sync.RWMutex),
+		connectMx: new(sync.Mutex),
+		connMulti: connMulti,
+		addr:      "4",
+		_type:     nonWritable,
+		delegate:  &tarantool.Connection{},
+	}
+	connMulti.writableLbMx = new(sync.Mutex)
+	connMulti.nonWritableLbMx = new(sync.Mutex)
+	connMulti.synchronizeCollections(conns)
+	return connMulti
 }
 
-func TestConnError_IncorrectParams(t *testing.T) {
-	multiConn, err := Connect([]string{}, tarantool.Opts{})
-	if err == nil {
-		t.Errorf("err is nil with incorrect params")
-	}
-	if multiConn != nil {
-		t.Errorf("conn is not nill with incorrect params")
-	}
-	if err.Error() != "addrs should not be empty" {
-		t.Errorf("incorrect error: %s", err.Error())
+func TestLbDistribution(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	connMulti := dummy2Writable2NonWritableCluster(ctx, cancel)
+
+	for i := 0; i < 100000; i++ {
+		go func() {
+
+			for ctx.Err() == nil {
+				connMulti.roundRobinWritable()
+			}
+
+		}()
+
+		go func() {
+
+			for ctx.Err() == nil {
+
+				connMulti.roundRobinNonWritable()
+			}
+
+		}()
 	}
 
-	multiConn, err = ConnectWithOpts([]string{server1}, tarantool.Opts{}, OptsMulti{})
-	if err == nil {
-		t.Errorf("err is nil with incorrect params")
-	}
-	if multiConn != nil {
-		t.Errorf("conn is not nill with incorrect params")
-	}
-	if err.Error() != "wrong check timeout, must be greater than 0" {
-		t.Errorf("incorrect error: %s", err.Error())
-	}
+	<-ctx.Done()
+	//for _, connection := range connMulti.writableLoadBalancedConnections {
+	//	println("writable", connection.addr," ", connection.pickedW)
+	//}
+	//for _, connection := range connMulti.nonWritableLoadBalancedConnections {
+	//	println("non-writable", connection.addr," ", connection.pickedNW)
+	//}
 }
 
-func TestConnError_Connection(t *testing.T) {
-	multiConn, err := Connect([]string{"err1", "err2"}, connOpts)
-	if err == nil {
-		t.Errorf("err is nil with incorrect params")
-		return
+func TestE2EBlackBox(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	auth := BasicAuth{
+		User: "admin",
+		Pass: "pass",
 	}
-	if multiConn != nil {
-		t.Errorf("conn is not nil with incorrect params")
-		return
-	}
-}
-
-func TestConnSuccessfully(t *testing.T) {
-	multiConn, err := Connect([]string{"err", server1}, connOpts)
+	db, err := ConnectWithDefaults(ctx, cancel, auth, "localhost:3303", "bogus:2322")
+	defer func(db *ConnectionMulti) {
+		if cErr := db.Close(); cErr != nil {
+			panic(cErr)
+		}
+		if db.ConnectedNow() {
+			panic("still connected")
+		}
+		if len(db.groupedByAddressConnections) != 0 {
+			panic("groupedByAddressConnections is not empty ")
+		}
+	}(db)
 	if err != nil {
-		t.Errorf("Failed to connect: %s", err.Error())
-		return
-	}
-	if multiConn == nil {
-		t.Errorf("conn is nil after Connect")
-		return
-	}
-	defer multiConn.Close()
-
-	if !multiConn.ConnectedNow() {
-		t.Errorf("conn has incorrect status")
-		return
-	}
-	if multiConn.getCurrentConnection().Addr() != server1 {
-		t.Errorf("conn has incorrect addr")
-		return
-	}
-}
-
-func TestReconnect(t *testing.T) {
-	multiConn, _ := Connect([]string{server1, server2}, connOpts)
-	if multiConn == nil {
-		t.Errorf("conn is nil after Connect")
-		return
-	}
-	timer := time.NewTimer(300 * time.Millisecond)
-	<-timer.C
-	defer multiConn.Close()
-
-	conn, _ := multiConn.getConnectionFromPool(server1)
-	conn.Close()
-
-	if multiConn.getCurrentConnection().Addr() == server1 {
-		t.Errorf("conn has incorrect addr: %s after disconnect server1", multiConn.getCurrentConnection().Addr())
-	}
-	if !multiConn.ConnectedNow() {
-		t.Errorf("incorrect multiConn status after reconecting")
+		panic(fmt.Sprintf("Could not connect to cluster %v", err))
 	}
 
-	timer = time.NewTimer(100 * time.Millisecond)
-	<-timer.C
-	conn, _ = multiConn.getConnectionFromPool(server1)
-	if !conn.ConnectedNow() {
-		t.Errorf("incorrect conn status after reconecting")
+	for i := 0; i < 100; i++ {
+		go func() {
+			for ctx != nil && ctx.Err() == nil {
+				id := ""  //uuid.New().String()
+				id2 := "" //uuid.New().String()
+				if db == nil || ctx == nil {
+					return
+				}
+				if r, rErr := db.Insert("TEST_TABLE", []interface{}{id, id2, 3}); (rErr != nil && !errors.Is(rErr, ctx.Err())) || r.Code != tarantool.OkCode {
+					if r == nil || r.Code != tarantool.ErrTupleFound {
+						panic(errors.New(fmt.Sprintf("Insert failed because: %v --- %v\n", rErr, r)))
+					}
+				}
+				if db == nil || ctx == nil {
+					return
+				}
+				if r, rErr := db.Select("TEST_TABLE", "T_IDX_1", 0, 1, tarantool.IterEq, []interface{}{id2, 3}); (rErr != nil && !errors.Is(rErr, ctx.Err())) || r.Code != tarantool.OkCode {
+					panic(errors.New(fmt.Sprintf("Query failed because: %v------%v\n", rErr, r)))
+				} else {
+					if rErr != nil && !errors.Is(rErr, ctx.Err()) {
+						panic(rErr)
+					}
+					if len(r.Tuples()) != 0 {
+						single := r.Tuples()[0]
+						if single[0].(string) != id {
+							panic(errors.New(fmt.Sprintf("expected:%v actual:%v", id, single[0].(string))))
+						}
+					} else {
+						fmt.Sprintln("Query returned nothing")
+					}
+				}
+				if db == nil || ctx == nil {
+					return
+				}
+				if r, rErr := db.Delete("TEST_TABLE", "T_IDX_1", []interface{}{id2, 3}); (rErr != nil && !errors.Is(rErr, ctx.Err())) || r.Code != tarantool.OkCode {
+					if r == nil || r.Code != tarantool.ErrTupleNotFound {
+						panic(errors.New(fmt.Sprintf("Delete failed because: %v --- %v\n", rErr, r)))
+					}
+				}
+			}
+		}()
 	}
-}
-
-func TestDisconnectAll(t *testing.T) {
-	multiConn, _ := Connect([]string{server1, server2}, connOpts)
-	if multiConn == nil {
-		t.Errorf("conn is nil after Connect")
-		return
-	}
-	timer := time.NewTimer(300 * time.Millisecond)
-	<-timer.C
-	defer multiConn.Close()
-
-	conn, _ := multiConn.getConnectionFromPool(server1)
-	conn.Close()
-	conn, _ = multiConn.getConnectionFromPool(server2)
-	conn.Close()
-
-	if multiConn.ConnectedNow() {
-		t.Errorf("incorrect status after desconnect all")
-	}
-
-	timer = time.NewTimer(100 * time.Millisecond)
-	<-timer.C
-	if !multiConn.ConnectedNow() {
-		t.Errorf("incorrect multiConn status after reconecting")
-	}
-	conn, _ = multiConn.getConnectionFromPool(server1)
-	if !conn.ConnectedNow() {
-		t.Errorf("incorrect server1 conn status after reconecting")
-	}
-	conn, _ = multiConn.getConnectionFromPool(server2)
-	if !conn.ConnectedNow() {
-		t.Errorf("incorrect server2 conn status after reconecting")
-	}
-}
-
-func TestClose(t *testing.T) {
-	multiConn, _ := Connect([]string{server1, server2}, connOpts)
-	if multiConn == nil {
-		t.Errorf("conn is nil after Connect")
-		return
-	}
-	timer := time.NewTimer(300 * time.Millisecond)
-	<-timer.C
-
-	conn, _ := multiConn.getConnectionFromPool(server1)
-	if !conn.ConnectedNow() {
-		t.Errorf("incorrect conn server1 status")
-	}
-	conn, _ = multiConn.getConnectionFromPool(server2)
-	if !conn.ConnectedNow() {
-		t.Errorf("incorrect conn server2 status")
-	}
-
-	multiConn.Close()
-	timer = time.NewTimer(100 * time.Millisecond)
-	<-timer.C
-
-	if multiConn.ConnectedNow() {
-		t.Errorf("incorrect multiConn status after close")
-	}
-	conn, _ = multiConn.getConnectionFromPool(server1)
-	if conn.ConnectedNow() {
-		t.Errorf("incorrect server1 conn status after close")
-	}
-	conn, _ = multiConn.getConnectionFromPool(server2)
-	if conn.ConnectedNow() {
-		t.Errorf("incorrect server2 conn status after close")
-	}
-}
-
-func TestRefresh(t *testing.T) {
-
-	multiConn, _ := ConnectWithOpts([]string{server1, server2}, connOpts, connOptsMulti)
-	if multiConn == nil {
-		t.Errorf("conn is nil after Connect")
-		return
-	}
-	curAddr := multiConn.addrs[0]
-
-	// wait for refresh timer
-	// scenario 1 nodeload, 1 refresh, 1 nodeload
-	time.Sleep(10 * time.Second)
-
-	newAddr := multiConn.addrs[0]
-
-	if curAddr == newAddr {
-		t.Errorf("Expect address refresh")
-	}
-
-	if !multiConn.ConnectedNow() {
-		t.Errorf("Expect connection to exist")
-	}
-
-	_, err := multiConn.Call(multiConn.opts.NodesGetFunctionName, []interface{}{})
-	if err != nil {
-		t.Error("Expect to get data after reconnect")
-	}
+	timerSync := time.NewTicker(4 * time.Second)
+	defer timerSync.Stop()
+	go func() {
+		for {
+			select {
+			case _, open := <-timerSync.C:
+				if !open || ctx.Err() != nil {
+					return
+				}
+				new_ := make(map[string]*loadBalancedConnection)
+				new_["localhost:3301"] = &loadBalancedConnection{
+					mx:        new(sync.RWMutex),
+					closeMx:   new(sync.RWMutex),
+					connectMx: new(sync.Mutex),
+					connMulti: db,
+					addr:      "localhost:3301",
+					_type:     writable,
+				}
+				db.sync(new_)
+			}
+		}
+	}()
+	timerRefresh := time.NewTicker(2500 * time.Millisecond)
+	defer timerRefresh.Stop()
+	go func() {
+		time.Sleep(time.Second)
+		for {
+			select {
+			case _, open := <-timerRefresh.C:
+				if !open || ctx.Err() != nil {
+					return
+				}
+				db.refresh(
+					&loadBalancedConnection{addr: "localhost:3303", _type: writable},
+					&loadBalancedConnection{addr: "localhost:3301", _type: nonWritable})
+			}
+		}
+	}()
+	timerCloseWritable := time.NewTicker(3500 * time.Millisecond)
+	defer timerCloseWritable.Stop()
+	go func() {
+		time.Sleep(time.Second)
+		for {
+			select {
+			case _, open := <-timerCloseWritable.C:
+				if !open || ctx.Err() != nil {
+					return
+				}
+				c := db.getConnection(true)
+				if c != nil {
+					if cErr := c.Close(); cErr != nil {
+						log.Println(cErr)
+					}
+				}
+			}
+		}
+	}()
+	timerCloseNonWritable := time.NewTicker(2800 * time.Millisecond)
+	defer timerCloseNonWritable.Stop()
+	go func() {
+		time.Sleep(time.Second)
+		for {
+			select {
+			case _, open := <-timerCloseNonWritable.C:
+				if !open || ctx.Err() != nil {
+					return
+				}
+				c := db.getConnection(false)
+				if c != nil {
+					if cErr := c.Close(); cErr != nil {
+						log.Println(cErr)
+					}
+				}
+			}
+		}
+	}()
+	<-ctx.Done()
 }
