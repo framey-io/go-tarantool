@@ -82,14 +82,14 @@ func (c *Tuple2) DecodeMsgpack(d *msgpack.Decoder) error {
 }
 
 var server = "127.0.0.1:3013"
-var spaceNo = uint32(512)
+var spaceNo = uint32(513)
 var spaceName = "test"
 var indexNo = uint32(0)
 var indexName = "primary"
 var opts = Opts{
 	Timeout: 500 * time.Millisecond,
-	User:    "test",
-	Pass:    "test",
+	User:    "admin",
+	Pass:    "pass",
 	//Concurrency: 32,
 	//RateLimit: 4*1024,
 }
@@ -435,7 +435,7 @@ func TestClient(t *testing.T) {
 	}
 	//resp, err = conn.Insert(spaceNo, []interface{}{uint(1), "hello", "world"})
 	resp, err = conn.Insert(spaceNo, &Tuple{Id: 1, Msg: "hello", Name: "world"})
-	if tntErr, ok := err.(Error); !ok || tntErr.Code != ErrTupleFound {
+	if tntErr, ok := err.(Error); !ok || tntErr.Code != ER_TUPLE_FOUND {
 		t.Errorf("Expected ErrTupleFound but got: %v", err)
 	}
 	if len(resp.Data) != 0 {
@@ -1002,6 +1002,91 @@ func TestComplexStructs(t *testing.T) {
 
 	if tuple.Cid != tuples[0].Cid || len(tuple.Members) != len(tuples[0].Members) || tuple.Members[1].Name != tuples[0].Members[1].Name {
 		t.Errorf("Failed to selectTyped: incorrect data")
+		return
+	}
+}
+
+type TestTable struct {
+	/* instruct msgpack to pack this struct as array,
+	 * so no custom packer is needed */
+	_msgpack struct{} `msgpack:",asArray"`
+	Id       string
+	Name     string
+	Type     int
+}
+
+func TestPrepareExecute(t *testing.T) {
+	var err error
+	var conn *Connection
+
+	conn, err = Connect(server, opts)
+	if err != nil {
+		t.Errorf("Failed to connect: %s", err.Error())
+		return
+	}
+	if conn == nil {
+		t.Errorf("conn is nil after Connect")
+		return
+	}
+	defer conn.Close()
+
+	var s []TestTable
+	selectSql := "SELECT * FROM test_table where name = :name and type = :type"
+	if err = conn.PrepareExecuteTyped(selectSql, map[string]interface{}{"name": "a", "type": 2}, &s); err != nil {
+		t.Errorf("Failed to PrepareExecute1: %s", err.Error())
+		return
+	}
+	if len(s) != 0 {
+		t.Errorf("Expected no records")
+		return
+	}
+	insertSql := "insert into test_table (id, name, type) values (:id,:name,:type)"
+
+	if r, err := conn.PrepareExecute(insertSql, map[string]interface{}{"id": "id1", "name": "a", "type": 2}); err != nil {
+		t.Errorf("Failed to PrepareExecute3: %s", err.Error())
+		return
+	} else if r.Tuples()[0][0].(int64) != 1 {
+		t.Errorf("PrepareExecute3: Expected 1 but got %v", r.Tuples()[0][0].(int64))
+		return
+	}
+
+	updateSql := "update test_table set name = :name where id = :id"
+
+	if r, err := conn.PrepareExecute(updateSql, map[string]interface{}{"id": "id1", "name": "b"}); err != nil {
+		t.Errorf("Failed to PrepareExecute4: %s", err.Error())
+		return
+	} else if r.Tuples()[0][0].(int64) != 1 {
+		t.Errorf("PrepareExecute4: Expected 1 but got %v", r.Tuples()[0][0].(int64))
+		return
+	}
+
+	if err = conn.PrepareExecuteTyped(selectSql, map[string]interface{}{"name": "b", "type": 2}, &s); err != nil {
+		t.Errorf("Failed to PrepareExecute4: %s", err.Error())
+		return
+	}
+
+	if len(s) != 1 || s[0].Id != "id1" || s[0].Name != "b" || s[0].Type != 2 {
+		t.Errorf("Expected 1 record with id:id1, name:a, type:2")
+		return
+	}
+
+	deleteSql := "delete from test_table where name = :name"
+
+	if r, err := conn.PrepareExecute(deleteSql, map[string]interface{}{"name": "b"}); err != nil {
+		t.Errorf("Failed to PrepareExecute5: %s", err.Error())
+		return
+	} else if r.Tuples()[0][0].(int64) != 1 {
+		t.Errorf("PrepareExecute5: Expected 1 but got %v", r.Tuples()[0][0].(int64))
+		return
+	}
+
+	var s2 []TestTable
+	if err = conn.PrepareExecuteTyped(selectSql, map[string]interface{}{"name": "b", "type": 2}, &s); err != nil {
+		t.Errorf("Failed to PrepareExecute6: %s", err.Error())
+		return
+	}
+	if len(s2) != 0 {
+		t.Errorf("Expected no records")
 		return
 	}
 }

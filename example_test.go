@@ -42,7 +42,7 @@ func ExampleConnection_Select() {
 		return
 	}
 	defer conn.Close()
-	resp, err := conn.Select(512, 0, 0, 100, tarantool.IterEq, []interface{}{uint(1111)})
+	resp, err := conn.Select(513, 0, 0, 100, tarantool.IterEq, []interface{}{uint(1111)})
 	if err != nil {
 		fmt.Printf("error in select is %v", err)
 		return
@@ -68,7 +68,7 @@ func ExampleConnection_SelectTyped() {
 	}
 	defer conn.Close()
 	var res []Tuple
-	err = conn.SelectTyped(512, 0, 0, 100, tarantool.IterEq, tarantool.IntKey{1111}, &res)
+	err = conn.SelectTyped(513, 0, 0, 100, tarantool.IterEq, tarantool.IntKey{1111}, &res)
 	if err != nil {
 		fmt.Printf("error in select is %v", err)
 		return
@@ -86,7 +86,7 @@ func ExampleConnection_SelectTyped() {
 }
 
 func Example() {
-	spaceNo := uint32(512)
+	spaceNo := uint32(513)
 	indexNo := uint32(0)
 
 	server := "127.0.0.1:3013"

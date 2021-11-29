@@ -116,19 +116,39 @@ func (connMulti *ConnectionMulti) Close() (err error) {
 	return connMulti.stop()
 }
 
-func (connMulti *ConnectionMulti) detectType(s string) (_type clusterMemberType, script string) {
-	trimmedS := strings.Trim(s, " ")
+func (connMulti *ConnectionMulti) checkIfRequiresWrite(expr string, _default bool) (string, bool) {
+	trimmedLoweredS := strings.ToLower(strings.Trim(expr, " "))
 	nonWritableTemplate := fmt.Sprintf("{{%s}}", nonWritable)
+	if isNonWritable := strings.HasPrefix(trimmedLoweredS, nonWritableTemplate); isNonWritable {
+		return strings.Replace(expr, nonWritableTemplate, "", 1), false
+	}
+
 	writableTemplate := fmt.Sprintf("{{%s}}", writable)
-
-	if isNonWritable := strings.HasPrefix(trimmedS, nonWritableTemplate); isNonWritable {
-		return nonWritable, strings.Replace(s, nonWritableTemplate, "", 1)
-	}
-	if isWritable := strings.HasPrefix(trimmedS, writableTemplate); isWritable {
-		return writable, strings.Replace(s, writableTemplate, "", 1)
+	if isWritable := strings.HasPrefix(trimmedLoweredS, writableTemplate); isWritable {
+		return strings.Replace(expr, writableTemplate, "", 1), true
 	}
 
-	return "", s
+	if isWritable := strings.HasPrefix(trimmedLoweredS, "insert"); isWritable {
+		return expr, true
+	}
+
+	if isWritable := strings.HasPrefix(trimmedLoweredS, "delete"); isWritable {
+		return expr, true
+	}
+
+	if isWritable := strings.HasPrefix(trimmedLoweredS, "update"); isWritable {
+		return expr, true
+	}
+
+	if isNonWritable := strings.HasPrefix(trimmedLoweredS, "values"); isNonWritable {
+		return expr, false
+	}
+
+	if isNonWritable := strings.HasPrefix(trimmedLoweredS, "select"); isNonWritable {
+		return expr, false
+	}
+
+	return expr, _default
 }
 
 func (connMulti *ConnectionMulti) balance(requiresWrite bool, f func(conn *tarantool.Connection) (*tarantool.Response, error)) (r *tarantool.Response, err error) {
@@ -195,22 +215,48 @@ func (connMulti *ConnectionMulti) shouldRetry(err error) (shouldRetry bool) {
 	case tarantool.Error:
 		code := err.(tarantool.Error).Code
 		msg := err.(tarantool.Error).Msg
-		if code == tarantool.ErrNonmaster ||
-			code == tarantool.ErrReadonly ||
-			code == tarantool.ErrUnknownServer ||
-			code == tarantool.ErrLocalServerIsNotActive ||
-			code == tarantool.ErrClusterIdMismatch ||
-			code == tarantool.ErrInvalidOrder ||
-			code == tarantool.ErrInvalidXlog ||
-			code == tarantool.ErrNoConnection ||
-			code == tarantool.ErrActiveTransaction ||
-			code == tarantool.ErrMissingSnapshot ||
-			code == tarantool.ErrTransactionConflict ||
-			code == tarantool.ErrProcC ||
-			code == tarantool.ErrUnknown ||
-			code == tarantool.ErrMemoryIssue ||
-			code == tarantool.ErrClusterIdIsRo ||
-			code == tarantool.ErrWalIo ||
+		if code == tarantool.ER_NONMASTER ||
+			code == tarantool.ER_READONLY ||
+			code == tarantool.ER_TUPLE_FORMAT_LIMIT ||
+			code == tarantool.ER_UNKNOWN ||
+			code == tarantool.ER_MEMORY_ISSUE ||
+			code == tarantool.ER_UNKNOWN_REPLICA ||
+			code == tarantool.ER_REPLICASET_UUID_MISMATCH ||
+			code == tarantool.ER_REPLICASET_UUID_IS_RO ||
+			code == tarantool.ER_REPLICA_ID_IS_RESERVED ||
+			code == tarantool.ER_REPLICA_MAX ||
+			code == tarantool.ER_INVALID_XLOG ||
+			code == tarantool.ER_NO_CONNECTION ||
+			code == tarantool.ER_ACTIVE_TRANSACTION ||
+			code == tarantool.ER_SESSION_CLOSED ||
+			code == tarantool.ER_TRANSACTION_CONFLICT ||
+			code == tarantool.ER_MEMTX_MAX_TUPLE_SIZE ||
+			code == tarantool.ER_VIEW_IS_RO ||
+			code == tarantool.ER_NO_TRANSACTION ||
+			code == tarantool.ER_SYSTEM ||
+			code == tarantool.ER_LOADING ||
+			code == tarantool.ER_LOCAL_INSTANCE_ID_IS_READ_ONLY ||
+			code == tarantool.ER_BACKUP_IN_PROGRESS ||
+			code == tarantool.ER_READ_VIEW_ABORTED ||
+			code == tarantool.ER_CASCADE_ROLLBACK ||
+			code == tarantool.ER_VY_QUOTA_TIMEOUT ||
+			code == tarantool.ER_TRANSACTION_YIELD ||
+			code == tarantool.ER_BOOTSTRAP_READONLY ||
+			code == tarantool.ER_REPLICA_NOT_ANON ||
+			code == tarantool.ER_CANNOT_REGISTER ||
+			code == tarantool.ER_UNCOMMITTED_FOREIGN_SYNC_TXNS ||
+			code == tarantool.ER_SYNC_MASTER_MISMATCH ||
+			code == tarantool.ER_SYNC_QUORUM_TIMEOUT ||
+			code == tarantool.ER_SYNC_ROLLBACK ||
+			code == tarantool.ER_QUORUM_WAIT ||
+			code == tarantool.ER_TOO_EARLY_SUBSCRIBE ||
+			code == tarantool.ER_INTERFERING_PROMOTE ||
+			code == tarantool.ER_ELECTION_DISABLED ||
+			code == tarantool.ER_TXN_ROLLBACK ||
+			code == tarantool.ER_NOT_LEADER ||
+			code == tarantool.ER_SYNC_QUEUE_UNCLAIMED ||
+			code == tarantool.ER_SYNC_QUEUE_FOREIGN ||
+			code == tarantool.ER_WAL_IO ||
 			strings.Contains(msg, "read-only") {
 			shouldRetry = true
 		}
@@ -274,13 +320,7 @@ func (connMulti *ConnectionMulti) Upsert(space interface{}, tuple, ops interface
 }
 
 func (connMulti *ConnectionMulti) Call(functionName string, args interface{}) (resp *tarantool.Response, err error) {
-	t, script := connMulti.detectType(functionName)
-	requiresWrite := true
-	switch t {
-	case nonWritable:
-		requiresWrite = false
-		break
-	}
+	script, requiresWrite := connMulti.checkIfRequiresWrite(functionName, true)
 
 	return connMulti.balance(requiresWrite, func(conn *tarantool.Connection) (*tarantool.Response, error) {
 		return conn.Call(script, args)
@@ -288,13 +328,7 @@ func (connMulti *ConnectionMulti) Call(functionName string, args interface{}) (r
 }
 
 func (connMulti *ConnectionMulti) Call17(functionName string, args interface{}) (resp *tarantool.Response, err error) {
-	t, script := connMulti.detectType(functionName)
-	requiresWrite := true
-	switch t {
-	case nonWritable:
-		requiresWrite = false
-		break
-	}
+	script, requiresWrite := connMulti.checkIfRequiresWrite(functionName, true)
 
 	return connMulti.balance(requiresWrite, func(conn *tarantool.Connection) (*tarantool.Response, error) {
 		return conn.Call17(script, args)
@@ -302,16 +336,18 @@ func (connMulti *ConnectionMulti) Call17(functionName string, args interface{}) 
 }
 
 func (connMulti *ConnectionMulti) Eval(expr string, args interface{}) (resp *tarantool.Response, err error) {
-	t, script := connMulti.detectType(expr)
-	requiresWrite := true
-	switch t {
-	case nonWritable:
-		requiresWrite = false
-		break
-	}
+	script, requiresWrite := connMulti.checkIfRequiresWrite(expr, true)
 
 	return connMulti.balance(requiresWrite, func(conn *tarantool.Connection) (*tarantool.Response, error) {
 		return conn.Eval(script, args)
+	})
+}
+
+func (connMulti *ConnectionMulti) PrepareExecute(sql string, args map[string]interface{}) (resp *tarantool.Response, err error) {
+	script, requiresWrite := connMulti.checkIfRequiresWrite(sql, true)
+
+	return connMulti.balance(requiresWrite, func(conn *tarantool.Connection) (*tarantool.Response, error) {
+		return conn.PrepareExecute(script, args)
 	})
 }
 
@@ -352,13 +388,7 @@ func (connMulti *ConnectionMulti) UpdateTyped(space, index interface{}, key, ops
 }
 
 func (connMulti *ConnectionMulti) CallTyped(functionName string, args interface{}, result interface{}) (err error) {
-	t, script := connMulti.detectType(functionName)
-	requiresWrite := true
-	switch t {
-	case nonWritable:
-		requiresWrite = false
-		break
-	}
+	script, requiresWrite := connMulti.checkIfRequiresWrite(functionName, true)
 
 	return connMulti.balanceTyped(requiresWrite, func(conn *tarantool.Connection) error {
 		return conn.CallTyped(script, args, result)
@@ -366,13 +396,7 @@ func (connMulti *ConnectionMulti) CallTyped(functionName string, args interface{
 }
 
 func (connMulti *ConnectionMulti) Call17Typed(functionName string, args interface{}, result interface{}) (err error) {
-	t, script := connMulti.detectType(functionName)
-	requiresWrite := true
-	switch t {
-	case nonWritable:
-		requiresWrite = false
-		break
-	}
+	script, requiresWrite := connMulti.checkIfRequiresWrite(functionName, true)
 
 	return connMulti.balanceTyped(requiresWrite, func(conn *tarantool.Connection) error {
 		return conn.Call17Typed(script, args, result)
@@ -380,16 +404,18 @@ func (connMulti *ConnectionMulti) Call17Typed(functionName string, args interfac
 }
 
 func (connMulti *ConnectionMulti) EvalTyped(expr string, args interface{}, result interface{}) (err error) {
-	t, script := connMulti.detectType(expr)
-	requiresWrite := true
-	switch t {
-	case nonWritable:
-		requiresWrite = false
-		break
-	}
+	script, requiresWrite := connMulti.checkIfRequiresWrite(expr, true)
 
 	return connMulti.balanceTyped(requiresWrite, func(conn *tarantool.Connection) error {
 		return conn.EvalTyped(script, args, result)
+	})
+}
+
+func (connMulti *ConnectionMulti) PrepareExecuteTyped(sql string, args map[string]interface{}, result interface{}) (err error) {
+	script, requiresWrite := connMulti.checkIfRequiresWrite(sql, true)
+
+	return connMulti.balanceTyped(requiresWrite, func(conn *tarantool.Connection) error {
+		return conn.PrepareExecuteTyped(script, args, result)
 	})
 }
 

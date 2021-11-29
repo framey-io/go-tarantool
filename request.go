@@ -2,6 +2,7 @@ package tarantool
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/vmihailenco/msgpack/v5"
@@ -121,6 +122,10 @@ func (conn *Connection) Eval(expr string, args interface{}) (resp *Response, err
 	return conn.EvalAsync(expr, args).Get()
 }
 
+func (conn *Connection) PrepareExecute(sql string, args map[string]interface{}) (resp *Response, err error) {
+	return conn.prepareExecute(func(fut *Future) (*Response, error) { return fut.Get() }, sql, args)
+}
+
 // single used for conn.GetTyped for decode one tuple
 type single struct {
 	res   interface{}
@@ -213,6 +218,12 @@ func (conn *Connection) EvalTyped(expr string, args interface{}, result interfac
 	return conn.EvalAsync(expr, args).GetTyped(result)
 }
 
+func (conn *Connection) PrepareExecuteTyped(sql string, args map[string]interface{}, result interface{}) (err error) {
+	_, err = conn.prepareExecute(func(fut *Future) (*Response, error) { return nil, fut.GetTyped(result) }, sql, args)
+
+	return
+}
+
 // SelectAsync sends select request to tarantool and returns Future.
 func (conn *Connection) SelectAsync(space, index interface{}, offset, limit, iterator uint32, key interface{}) *Future {
 	future := conn.newFuture(SelectRequest)
@@ -298,7 +309,7 @@ func (conn *Connection) UpsertAsync(space interface{}, tuple interface{}, ops in
 	return future.send(conn, func(enc *msgpack.Encoder) error {
 		enc.EncodeMapLen(3)
 		enc.EncodeUint(KeySpaceNo)
-		enc.EncodeUint64(uint64(spaceNo))
+		enc.EncodeUint32(spaceNo)
 		enc.EncodeUint(KeyTuple)
 		if err := enc.Encode(tuple); err != nil {
 			return err
@@ -314,9 +325,9 @@ func (conn *Connection) CallAsync(functionName string, args interface{}) *Future
 	future := conn.newFuture(CallRequest)
 	return future.send(conn, func(enc *msgpack.Encoder) error {
 		enc.EncodeMapLen(2)
-		enc.EncodeUint64(KeyFunctionName)
+		enc.EncodeUint(KeyFunctionName)
 		enc.EncodeString(functionName)
-		enc.EncodeUint64(KeyTuple)
+		enc.EncodeUint(KeyTuple)
 		return enc.Encode(args)
 	})
 }
@@ -340,11 +351,79 @@ func (conn *Connection) EvalAsync(expr string, args interface{}) *Future {
 	future := conn.newFuture(EvalRequest)
 	return future.send(conn, func(enc *msgpack.Encoder) error {
 		enc.EncodeMapLen(2)
-		enc.EncodeUint64(KeyExpression)
+		enc.EncodeUint(KeyExpression)
 		enc.EncodeString(expr)
-		enc.EncodeUint64(KeyTuple)
+		enc.EncodeUint(KeyTuple)
 		return enc.Encode(args)
 	})
+}
+
+func (conn *Connection) prepareExecute(f func(future *Future) (*Response, error), sql string, args map[string]interface{}) (*Response, error) {
+	if stmtId, prepareErr := conn.sqlStatementId(sql); prepareErr != nil {
+		return nil, prepareErr
+	} else {
+		fut := conn.newFuture(ExecuteRequest).send(conn, func(enc *msgpack.Encoder) error {
+			enc.EncodeMapLen(3)
+			enc.EncodeUint(KeySqlStmtId)
+			enc.EncodeUint64(stmtId)
+			enc.EncodeUint(KeySqlBind)
+			if args != nil && len(args) > 0 {
+				enc.EncodeArrayLen(len(args))
+				for k, v := range args {
+					m := make(map[string]interface{}, 1)
+					m[fmt.Sprintf(":%v", k)] = v
+					if err := enc.EncodeMap(m); err != nil {
+						return err
+					}
+				}
+			} else {
+				enc.EncodeArrayLen(0)
+			}
+			enc.EncodeUint(KeyPrepareOptions)
+			enc.EncodeArrayLen(0)
+			return nil
+		})
+		r, err := f(fut)
+		if err != nil {
+			if ter, ok := err.(Error); ok && ter.Code == ER_WRONG_QUERY_ID {
+				conn.cacheMx.Lock()
+				conn.sqlPreparedStatementCache.Delete(sql)
+				conn.cacheMx.Unlock()
+				return conn.prepareExecute(f, sql, args)
+			}
+		}
+		return r, err
+	}
+}
+
+func (conn *Connection) sqlStatementId(sql string) (stmtId uint64, err error) {
+	if stmtIdIf, ok := conn.sqlPreparedStatementCache.Load(sql); ok {
+		stmtId = stmtIdIf.(uint64)
+	} else {
+		conn.cacheMx.Lock()
+		defer conn.cacheMx.Unlock()
+		if stmtIdIf, ok = conn.sqlPreparedStatementCache.Load(sql); ok {
+			stmtId = stmtIdIf.(uint64)
+		} else {
+			if stmtId, err = conn.prepare(sql); err == nil {
+				conn.sqlPreparedStatementCache.Store(sql, stmtId)
+			}
+		}
+	}
+	return
+}
+
+func (conn *Connection) prepare(sql string) (stmtId uint64, rErr error) {
+	prepareFuture := conn.newFuture(PrepareRequest).send(conn, func(enc *msgpack.Encoder) error {
+		enc.EncodeMapLen(1)
+		enc.EncodeUint(KeySqlText)
+		return enc.EncodeString(sql)
+	})
+	if prepareR, err := prepareFuture.Get(); err != nil {
+		return 0, err
+	} else {
+		return prepareR.Tuples()[0][0].(uint64), nil
+	}
 }
 
 //

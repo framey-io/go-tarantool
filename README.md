@@ -183,7 +183,7 @@ import (
 )
 
 func main() {
-	spaceNo := uint32(512)
+	spaceNo := uint32(513)
 	indexNo := uint32(0)
 
 	server := "127.0.0.1:3013"
