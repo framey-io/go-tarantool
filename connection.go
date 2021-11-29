@@ -132,6 +132,9 @@ type Connection struct {
 	state   uint32
 	dec     *msgpack.Decoder
 	lenbuf  [PacketLengthBytes]byte
+
+	sqlPreparedStatementCache sync.Map //map[string]uint64
+	cacheMx                   sync.Mutex
 }
 
 var _ = Connector(&Connection{}) // check compatibility with connector interface
@@ -272,8 +275,8 @@ func Connect(addr string, opts Opts) (conn *Connection, err error) {
 		ter, ok := err.(Error)
 		if conn.opts.Reconnect <= 0 {
 			return nil, err
-		} else if ok && (ter.Code == ErrNoSuchUser ||
-			ter.Code == ErrPasswordMismatch) {
+		} else if ok && (ter.Code == ER_NO_SUCH_USER ||
+			ter.Code == ER_PASSWORD_MISMATCH) {
 			/* reported auth errors immediatly */
 			return nil, err
 		} else {

@@ -149,15 +149,17 @@ func TestE2EBlackBox(t *testing.T) {
 				if db == nil || ctx == nil {
 					return
 				}
-				if r, rErr := db.Insert("TEST_TABLE", []interface{}{id, id2, 3}); (rErr != nil && !errors.Is(rErr, ctx.Err())) || r.Code != tarantool.OkCode {
-					if r == nil || r.Code != tarantool.ErrTupleFound {
+				//if r, rErr := db.Insert("TEST_TABLE", []interface{}{id, id2, 3}); (rErr != nil && !errors.Is(rErr, ctx.Err())) || r.Code != tarantool.OkCode {
+				if r, rErr := db.PrepareExecute("INSERT into test_table(id, name, type) values (:id,:name,:type)", map[string]interface{}{"name": id2, "type": 3, "id": id}); (rErr != nil && !errors.Is(rErr, ctx.Err())) || r.Code != tarantool.OkCode {
+					if r == nil || r.Code != tarantool.ER_TUPLE_FOUND {
 						panic(errors.New(fmt.Sprintf("Insert failed because: %v --- %v\n", rErr, r)))
 					}
 				}
 				if db == nil || ctx == nil {
 					return
 				}
-				if r, rErr := db.Select("TEST_TABLE", "T_IDX_1", 0, 1, tarantool.IterEq, []interface{}{id2, 3}); (rErr != nil && !errors.Is(rErr, ctx.Err())) || r.Code != tarantool.OkCode {
+				if r, rErr := db.PrepareExecute("SELECT * from test_table where name=:name and type=:type", map[string]interface{}{"name": id2, "type": 3}); (rErr != nil && !errors.Is(rErr, ctx.Err())) || r.Code != tarantool.OkCode {
+					//if r, rErr := db.Select("TEST_TABLE", "T_IDX_1", 0, 1, tarantool.IterEq, []interface{}{id2, 3}); (rErr != nil && !errors.Is(rErr, ctx.Err())) || r.Code != tarantool.OkCode {
 					panic(errors.New(fmt.Sprintf("Query failed because: %v------%v\n", rErr, r)))
 				} else {
 					if rErr != nil && !errors.Is(rErr, ctx.Err()) {
@@ -175,8 +177,9 @@ func TestE2EBlackBox(t *testing.T) {
 				if db == nil || ctx == nil {
 					return
 				}
-				if r, rErr := db.Delete("TEST_TABLE", "T_IDX_1", []interface{}{id2, 3}); (rErr != nil && !errors.Is(rErr, ctx.Err())) || r.Code != tarantool.OkCode {
-					if r == nil || r.Code != tarantool.ErrTupleNotFound {
+				if r, rErr := db.PrepareExecute("DELETE from test_table where name=:name and type=:type", map[string]interface{}{"name": id2, "type": 3}); (rErr != nil && !errors.Is(rErr, ctx.Err())) || r.Code != tarantool.OkCode {
+					//if r, rErr := db.Delete("TEST_TABLE", "T_IDX_1", []interface{}{id2, 3}); (rErr != nil && !errors.Is(rErr, ctx.Err())) || r.Code != tarantool.OkCode {
+					if r == nil || r.Code != tarantool.ER_TUPLE_NOT_FOUND {
 						panic(errors.New(fmt.Sprintf("Delete failed because: %v --- %v\n", rErr, r)))
 					}
 				}
