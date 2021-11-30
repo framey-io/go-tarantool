@@ -33,7 +33,7 @@ type loadBalancedConnection struct {
 	closeMx   *sync.RWMutex
 	connectMx *sync.Mutex
 	mx        *sync.RWMutex
-	connMulti *ConnectionMulti
+	connMulti *connectionMulti
 	delegate  *tarantool.Connection
 	_type     clusterMemberType
 	addr      string
@@ -94,7 +94,7 @@ func (c *loadBalancedConnection) clusterMemberType() clusterMemberType {
 	return c._type
 }
 
-func (connMulti *ConnectionMulti) stop() (err error) {
+func (connMulti *connectionMulti) stop() (err error) {
 	connMulti.opts.Cancel()
 	connMulti.lockAll()
 	defer connMulti.unlockAll()
@@ -113,7 +113,7 @@ func (connMulti *ConnectionMulti) stop() (err error) {
 	return
 }
 
-func (connMulti *ConnectionMulti) start(addresses []string) error {
+func (connMulti *connectionMulti) start(addresses []string) error {
 	conns := make(map[string]*loadBalancedConnection)
 	for _, addr := range addresses {
 		conns[addr] = &loadBalancedConnection{
@@ -156,7 +156,7 @@ func (connMulti *ConnectionMulti) start(addresses []string) error {
 	return ErrStartFailed
 }
 
-func (connMulti *ConnectionMulti) startMonitoringConnectionStateChanges() {
+func (connMulti *connectionMulti) startMonitoringConnectionStateChanges() {
 	defer func() { _ = connMulti.stop() }()
 
 	for connMulti.opts.Context.Err() == nil {
@@ -172,7 +172,7 @@ func (connMulti *ConnectionMulti) startMonitoringConnectionStateChanges() {
 	}
 }
 
-func (connMulti *ConnectionMulti) startMonitoringClusterStructureChanges() {
+func (connMulti *connectionMulti) startMonitoringClusterStructureChanges() {
 	timer := time.NewTicker(connMulti.opts.CheckTimeout)
 	defer func() { _ = connMulti.stop() }()
 	defer timer.Stop()
@@ -207,7 +207,7 @@ func (connMulti *ConnectionMulti) startMonitoringClusterStructureChanges() {
 	}
 }
 
-func (connMulti *ConnectionMulti) synchronizeCollections(g map[string]*loadBalancedConnection) {
+func (connMulti *connectionMulti) synchronizeCollections(g map[string]*loadBalancedConnection) {
 	connMulti.groupedByAddressConnections = g
 	connMulti.writableLoadBalancedConnections = make([]*loadBalancedConnection, 0, len(connMulti.groupedByAddressConnections))
 	connMulti.nonWritableLoadBalancedConnections = make([]*loadBalancedConnection, 0, len(connMulti.groupedByAddressConnections))
@@ -224,7 +224,7 @@ func (connMulti *ConnectionMulti) synchronizeCollections(g map[string]*loadBalan
 	}
 }
 
-func (connMulti *ConnectionMulti) sync(connections map[string]*loadBalancedConnection) {
+func (connMulti *connectionMulti) sync(connections map[string]*loadBalancedConnection) {
 	connMulti.lockAll()
 	defer connMulti.unlockAll()
 	for _, n := range connections {
@@ -253,7 +253,7 @@ func (connMulti *ConnectionMulti) sync(connections map[string]*loadBalancedConne
 	connMulti.synchronizeCollections(connMulti.groupedByAddressConnections)
 }
 
-func (connMulti *ConnectionMulti) refresh(connections ...*loadBalancedConnection) {
+func (connMulti *connectionMulti) refresh(connections ...*loadBalancedConnection) {
 	connMulti.lockAll()
 	defer connMulti.unlockAll()
 
@@ -266,17 +266,17 @@ func (connMulti *ConnectionMulti) refresh(connections ...*loadBalancedConnection
 	}
 }
 
-func (connMulti *ConnectionMulti) lockAll() {
+func (connMulti *connectionMulti) lockAll() {
 	connMulti.writableLbMx.Lock()
 	connMulti.nonWritableLbMx.Lock()
 }
 
-func (connMulti *ConnectionMulti) unlockAll() {
+func (connMulti *connectionMulti) unlockAll() {
 	connMulti.writableLbMx.Unlock()
 	connMulti.nonWritableLbMx.Unlock()
 }
 
-func (connMulti *ConnectionMulti) roundRobinWritable() *tarantool.Connection {
+func (connMulti *connectionMulti) roundRobinWritable() *tarantool.Connection {
 	if len(connMulti.writableLoadBalancedConnections) == 0 {
 		return nil
 	}
@@ -298,7 +298,7 @@ func (connMulti *ConnectionMulti) roundRobinWritable() *tarantool.Connection {
 	return nil
 }
 
-func (connMulti *ConnectionMulti) roundRobinNonWritable() *tarantool.Connection {
+func (connMulti *connectionMulti) roundRobinNonWritable() *tarantool.Connection {
 	if len(connMulti.nonWritableLoadBalancedConnections) == 0 {
 		return nil
 	}

@@ -34,8 +34,8 @@ func BenchmarkRoundRobinLb(b *testing.B) {
 	})
 }
 
-func dummy2Writable2NonWritableCluster(ctx context.Context, cancel context.CancelFunc) *ConnectionMulti {
-	connMulti := &ConnectionMulti{
+func dummy2Writable2NonWritableCluster(ctx context.Context, cancel context.CancelFunc) *connectionMulti {
+	connMulti := &connectionMulti{
 		opts: OptsMulti{
 			CheckTimeout: time.Second,
 			Context:      ctx,
@@ -126,7 +126,7 @@ func TestE2EBlackBox(t *testing.T) {
 		Pass: "pass",
 	}
 	db, err := ConnectWithDefaults(ctx, cancel, auth, "localhost:3303", "bogus:2322")
-	defer func(db *ConnectionMulti) {
+	defer func(db *connectionMulti) {
 		if cErr := db.Close(); cErr != nil {
 			panic(cErr)
 		}
@@ -136,7 +136,7 @@ func TestE2EBlackBox(t *testing.T) {
 		if len(db.groupedByAddressConnections) != 0 {
 			panic("groupedByAddressConnections is not empty ")
 		}
-	}(db)
+	}(db.(*connectionMulti))
 	if err != nil {
 		panic(fmt.Sprintf("Could not connect to cluster %v", err))
 	}
@@ -200,11 +200,11 @@ func TestE2EBlackBox(t *testing.T) {
 					mx:        new(sync.RWMutex),
 					closeMx:   new(sync.RWMutex),
 					connectMx: new(sync.Mutex),
-					connMulti: db,
+					connMulti: db.(*connectionMulti),
 					addr:      "localhost:3301",
 					_type:     writable,
 				}
-				db.sync(new_)
+				db.(*connectionMulti).sync(new_)
 			}
 		}
 	}()
@@ -218,7 +218,7 @@ func TestE2EBlackBox(t *testing.T) {
 				if !open || ctx.Err() != nil {
 					return
 				}
-				db.refresh(
+				db.(*connectionMulti).refresh(
 					&loadBalancedConnection{addr: "localhost:3303", _type: writable},
 					&loadBalancedConnection{addr: "localhost:3301", _type: nonWritable})
 			}
@@ -234,7 +234,7 @@ func TestE2EBlackBox(t *testing.T) {
 				if !open || ctx.Err() != nil {
 					return
 				}
-				c := db.getConnection(true)
+				c := db.(*connectionMulti).getConnection(true)
 				if c != nil {
 					if cErr := c.Close(); cErr != nil {
 						log.Println(cErr)
@@ -253,7 +253,7 @@ func TestE2EBlackBox(t *testing.T) {
 				if !open || ctx.Err() != nil {
 					return
 				}
-				c := db.getConnection(false)
+				c := db.(*connectionMulti).getConnection(false)
 				if c != nil {
 					if cErr := c.Close(); cErr != nil {
 						log.Println(cErr)

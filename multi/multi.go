@@ -20,14 +20,14 @@ var (
 	ErrStartFailed       = errors.New("failed to start")
 )
 
-type ConnectionMulti struct {
+type connectionMulti struct {
 	connOpts tarantool.Opts
 	opts     OptsMulti
 	notify   <-chan tarantool.ConnEvent
 	*lb
 }
 
-var _ = tarantool.Connector(&ConnectionMulti{}) // check compatibility with connector interface
+var _ = tarantool.Connector(&connectionMulti{}) // check compatibility with connector interface
 
 type OptsMulti struct {
 	CheckTimeout         time.Duration
@@ -40,7 +40,7 @@ type BasicAuth struct {
 	User, Pass string
 }
 
-func ConnectWithDefaults(ctx context.Context, cancel context.CancelFunc, auth BasicAuth, addresses ...string) (*ConnectionMulti, error) {
+func ConnectWithDefaults(ctx context.Context, cancel context.CancelFunc, auth BasicAuth, addresses ...string) (tarantool.Connector, error) {
 	conOpts := tarantool.Opts{
 		Timeout:       10 * time.Second,
 		MaxReconnects: 10,
@@ -56,7 +56,7 @@ func ConnectWithDefaults(ctx context.Context, cancel context.CancelFunc, auth Ba
 	return ConnectWithOpts(addresses, conOpts, conMultiOpts)
 }
 
-func ConnectWithOpts(addrs []string, connOpts tarantool.Opts, opts OptsMulti) (connMulti *ConnectionMulti, err error) {
+func ConnectWithOpts(addrs []string, connOpts tarantool.Opts, opts OptsMulti) (connMulti tarantool.Connector, err error) {
 	if len(addrs) == 0 {
 		return nil, ErrEmptyAddrs
 	}
@@ -75,13 +75,13 @@ func ConnectWithOpts(addrs []string, connOpts tarantool.Opts, opts OptsMulti) (c
 	opts.NodesGetFunctionName = fmt.Sprintf("{{%s}}%s", nonWritable, opts.NodesGetFunctionName)
 	notify := make(chan tarantool.ConnEvent, 100)
 	connOpts.Notify = notify
-	connMulti = &ConnectionMulti{
+	connMulti = &connectionMulti{
 		connOpts: connOpts,
 		opts:     opts,
 		notify:   notify,
 		lb:       new(lb),
 	}
-	if err = connMulti.start(addrs); err != nil {
+	if err = connMulti.(*connectionMulti).start(addrs); err != nil {
 		_ = connMulti.Close()
 		return nil, err
 	}
@@ -89,7 +89,7 @@ func ConnectWithOpts(addrs []string, connOpts tarantool.Opts, opts OptsMulti) (c
 	return connMulti, nil
 }
 
-func (connMulti *ConnectionMulti) getConnection(requiresWrite bool) *tarantool.Connection {
+func (connMulti *connectionMulti) getConnection(requiresWrite bool) *tarantool.Connection {
 	ctx, cancel := context.WithTimeout(connMulti.opts.Context, connMulti.connOpts.Timeout)
 	defer cancel()
 
@@ -108,15 +108,15 @@ func (connMulti *ConnectionMulti) getConnection(requiresWrite bool) *tarantool.C
 	return nil
 }
 
-func (connMulti *ConnectionMulti) ConnectedNow() bool {
+func (connMulti *connectionMulti) ConnectedNow() bool {
 	return connMulti.getConnection(true) != nil
 }
 
-func (connMulti *ConnectionMulti) Close() (err error) {
+func (connMulti *connectionMulti) Close() (err error) {
 	return connMulti.stop()
 }
 
-func (connMulti *ConnectionMulti) checkIfRequiresWrite(expr string, _default bool) (string, bool) {
+func (connMulti *connectionMulti) checkIfRequiresWrite(expr string, _default bool) (string, bool) {
 	trimmedLoweredS := strings.ToLower(strings.Trim(expr, " "))
 	nonWritableTemplate := fmt.Sprintf("{{%s}}", nonWritable)
 	if isNonWritable := strings.HasPrefix(trimmedLoweredS, nonWritableTemplate); isNonWritable {
@@ -151,7 +151,7 @@ func (connMulti *ConnectionMulti) checkIfRequiresWrite(expr string, _default boo
 	return expr, _default
 }
 
-func (connMulti *ConnectionMulti) balance(requiresWrite bool, f func(conn *tarantool.Connection) (*tarantool.Response, error)) (r *tarantool.Response, err error) {
+func (connMulti *connectionMulti) balance(requiresWrite bool, f func(conn *tarantool.Connection) (*tarantool.Response, error)) (r *tarantool.Response, err error) {
 	if connMulti.opts.Context.Err() != nil {
 		return nil, connMulti.opts.Context.Err()
 	}
@@ -191,7 +191,7 @@ func (connMulti *ConnectionMulti) balance(requiresWrite bool, f func(conn *taran
 	return
 }
 
-func (connMulti *ConnectionMulti) backoff(ctx context.Context) backoff.BackOffContext {
+func (connMulti *connectionMulti) backoff(ctx context.Context) backoff.BackOffContext {
 	return backoff.WithContext(&backoff.ExponentialBackOff{
 		InitialInterval:     time.Millisecond,
 		RandomizationFactor: 0.5,
@@ -203,7 +203,7 @@ func (connMulti *ConnectionMulti) backoff(ctx context.Context) backoff.BackOffCo
 	}, ctx)
 }
 
-func (connMulti *ConnectionMulti) shouldRetry(err error) (shouldRetry bool) {
+func (connMulti *connectionMulti) shouldRetry(err error) (shouldRetry bool) {
 	switch err.(type) {
 	case tarantool.ClientError:
 		code := err.(tarantool.ClientError).Code
@@ -265,7 +265,7 @@ func (connMulti *ConnectionMulti) shouldRetry(err error) (shouldRetry bool) {
 	return
 }
 
-func (connMulti *ConnectionMulti) balanceTyped(requiresWrite bool, f func(conn *tarantool.Connection) error) (err error) {
+func (connMulti *connectionMulti) balanceTyped(requiresWrite bool, f func(conn *tarantool.Connection) error) (err error) {
 	_, err = connMulti.balance(requiresWrite, func(conn *tarantool.Connection) (*tarantool.Response, error) {
 		return nil, f(conn)
 	})
@@ -273,53 +273,53 @@ func (connMulti *ConnectionMulti) balanceTyped(requiresWrite bool, f func(conn *
 	return
 }
 
-func (connMulti *ConnectionMulti) ConfiguredTimeout() time.Duration {
+func (connMulti *connectionMulti) ConfiguredTimeout() time.Duration {
 	return connMulti.getConnection(false).ConfiguredTimeout()
 }
 
-func (connMulti *ConnectionMulti) Ping() (resp *tarantool.Response, err error) {
+func (connMulti *connectionMulti) Ping() (resp *tarantool.Response, err error) {
 	return connMulti.balance(true, func(conn *tarantool.Connection) (*tarantool.Response, error) {
 		return conn.Ping()
 	})
 }
 
-func (connMulti *ConnectionMulti) Select(space, index interface{}, offset, limit, iterator uint32, key interface{}) (resp *tarantool.Response, err error) {
+func (connMulti *connectionMulti) Select(space, index interface{}, offset, limit, iterator uint32, key interface{}) (resp *tarantool.Response, err error) {
 	return connMulti.balance(false, func(conn *tarantool.Connection) (*tarantool.Response, error) {
 		return conn.Select(space, index, offset, limit, iterator, key)
 	})
 }
 
-func (connMulti *ConnectionMulti) Insert(space interface{}, tuple interface{}) (resp *tarantool.Response, err error) {
+func (connMulti *connectionMulti) Insert(space interface{}, tuple interface{}) (resp *tarantool.Response, err error) {
 	return connMulti.balance(true, func(conn *tarantool.Connection) (*tarantool.Response, error) {
 		return conn.Insert(space, tuple)
 	})
 }
 
-func (connMulti *ConnectionMulti) Replace(space interface{}, tuple interface{}) (resp *tarantool.Response, err error) {
+func (connMulti *connectionMulti) Replace(space interface{}, tuple interface{}) (resp *tarantool.Response, err error) {
 	return connMulti.balance(true, func(conn *tarantool.Connection) (*tarantool.Response, error) {
 		return conn.Replace(space, tuple)
 	})
 }
 
-func (connMulti *ConnectionMulti) Delete(space, index interface{}, key interface{}) (resp *tarantool.Response, err error) {
+func (connMulti *connectionMulti) Delete(space, index interface{}, key interface{}) (resp *tarantool.Response, err error) {
 	return connMulti.balance(true, func(conn *tarantool.Connection) (*tarantool.Response, error) {
 		return conn.Delete(space, index, key)
 	})
 }
 
-func (connMulti *ConnectionMulti) Update(space, index interface{}, key, ops interface{}) (resp *tarantool.Response, err error) {
+func (connMulti *connectionMulti) Update(space, index interface{}, key, ops interface{}) (resp *tarantool.Response, err error) {
 	return connMulti.balance(true, func(conn *tarantool.Connection) (*tarantool.Response, error) {
 		return conn.Update(space, index, key, ops)
 	})
 }
 
-func (connMulti *ConnectionMulti) Upsert(space interface{}, tuple, ops interface{}) (resp *tarantool.Response, err error) {
+func (connMulti *connectionMulti) Upsert(space interface{}, tuple, ops interface{}) (resp *tarantool.Response, err error) {
 	return connMulti.balance(true, func(conn *tarantool.Connection) (*tarantool.Response, error) {
 		return conn.Upsert(space, tuple, ops)
 	})
 }
 
-func (connMulti *ConnectionMulti) Call(functionName string, args interface{}) (resp *tarantool.Response, err error) {
+func (connMulti *connectionMulti) Call(functionName string, args interface{}) (resp *tarantool.Response, err error) {
 	script, requiresWrite := connMulti.checkIfRequiresWrite(functionName, true)
 
 	return connMulti.balance(requiresWrite, func(conn *tarantool.Connection) (*tarantool.Response, error) {
@@ -327,7 +327,7 @@ func (connMulti *ConnectionMulti) Call(functionName string, args interface{}) (r
 	})
 }
 
-func (connMulti *ConnectionMulti) Call17(functionName string, args interface{}) (resp *tarantool.Response, err error) {
+func (connMulti *connectionMulti) Call17(functionName string, args interface{}) (resp *tarantool.Response, err error) {
 	script, requiresWrite := connMulti.checkIfRequiresWrite(functionName, true)
 
 	return connMulti.balance(requiresWrite, func(conn *tarantool.Connection) (*tarantool.Response, error) {
@@ -335,7 +335,7 @@ func (connMulti *ConnectionMulti) Call17(functionName string, args interface{}) 
 	})
 }
 
-func (connMulti *ConnectionMulti) Eval(expr string, args interface{}) (resp *tarantool.Response, err error) {
+func (connMulti *connectionMulti) Eval(expr string, args interface{}) (resp *tarantool.Response, err error) {
 	script, requiresWrite := connMulti.checkIfRequiresWrite(expr, true)
 
 	return connMulti.balance(requiresWrite, func(conn *tarantool.Connection) (*tarantool.Response, error) {
@@ -343,7 +343,7 @@ func (connMulti *ConnectionMulti) Eval(expr string, args interface{}) (resp *tar
 	})
 }
 
-func (connMulti *ConnectionMulti) PrepareExecute(sql string, args map[string]interface{}) (resp *tarantool.Response, err error) {
+func (connMulti *connectionMulti) PrepareExecute(sql string, args map[string]interface{}) (resp *tarantool.Response, err error) {
 	script, requiresWrite := connMulti.checkIfRequiresWrite(sql, true)
 
 	return connMulti.balance(requiresWrite, func(conn *tarantool.Connection) (*tarantool.Response, error) {
@@ -351,43 +351,43 @@ func (connMulti *ConnectionMulti) PrepareExecute(sql string, args map[string]int
 	})
 }
 
-func (connMulti *ConnectionMulti) GetTyped(space, index interface{}, key interface{}, result interface{}) (err error) {
+func (connMulti *connectionMulti) GetTyped(space, index interface{}, key interface{}, result interface{}) (err error) {
 	return connMulti.balanceTyped(false, func(conn *tarantool.Connection) error {
 		return conn.GetTyped(space, index, key, result)
 	})
 }
 
-func (connMulti *ConnectionMulti) SelectTyped(space, index interface{}, offset, limit, iterator uint32, key interface{}, result interface{}) (err error) {
+func (connMulti *connectionMulti) SelectTyped(space, index interface{}, offset, limit, iterator uint32, key interface{}, result interface{}) (err error) {
 	return connMulti.balanceTyped(false, func(conn *tarantool.Connection) error {
 		return conn.SelectTyped(space, index, offset, limit, iterator, key, result)
 	})
 }
 
-func (connMulti *ConnectionMulti) InsertTyped(space interface{}, tuple interface{}, result interface{}) (err error) {
+func (connMulti *connectionMulti) InsertTyped(space interface{}, tuple interface{}, result interface{}) (err error) {
 	return connMulti.balanceTyped(true, func(conn *tarantool.Connection) error {
 		return conn.InsertTyped(space, tuple, result)
 	})
 }
 
-func (connMulti *ConnectionMulti) ReplaceTyped(space interface{}, tuple interface{}, result interface{}) (err error) {
+func (connMulti *connectionMulti) ReplaceTyped(space interface{}, tuple interface{}, result interface{}) (err error) {
 	return connMulti.balanceTyped(true, func(conn *tarantool.Connection) error {
 		return conn.ReplaceTyped(space, tuple, result)
 	})
 }
 
-func (connMulti *ConnectionMulti) DeleteTyped(space, index interface{}, key interface{}, result interface{}) (err error) {
+func (connMulti *connectionMulti) DeleteTyped(space, index interface{}, key interface{}, result interface{}) (err error) {
 	return connMulti.balanceTyped(true, func(conn *tarantool.Connection) error {
 		return conn.DeleteTyped(space, index, key, result)
 	})
 }
 
-func (connMulti *ConnectionMulti) UpdateTyped(space, index interface{}, key, ops interface{}, result interface{}) (err error) {
+func (connMulti *connectionMulti) UpdateTyped(space, index interface{}, key, ops interface{}, result interface{}) (err error) {
 	return connMulti.balanceTyped(true, func(conn *tarantool.Connection) error {
 		return conn.UpdateTyped(space, index, key, ops, result)
 	})
 }
 
-func (connMulti *ConnectionMulti) CallTyped(functionName string, args interface{}, result interface{}) (err error) {
+func (connMulti *connectionMulti) CallTyped(functionName string, args interface{}, result interface{}) (err error) {
 	script, requiresWrite := connMulti.checkIfRequiresWrite(functionName, true)
 
 	return connMulti.balanceTyped(requiresWrite, func(conn *tarantool.Connection) error {
@@ -395,7 +395,7 @@ func (connMulti *ConnectionMulti) CallTyped(functionName string, args interface{
 	})
 }
 
-func (connMulti *ConnectionMulti) Call17Typed(functionName string, args interface{}, result interface{}) (err error) {
+func (connMulti *connectionMulti) Call17Typed(functionName string, args interface{}, result interface{}) (err error) {
 	script, requiresWrite := connMulti.checkIfRequiresWrite(functionName, true)
 
 	return connMulti.balanceTyped(requiresWrite, func(conn *tarantool.Connection) error {
@@ -403,7 +403,7 @@ func (connMulti *ConnectionMulti) Call17Typed(functionName string, args interfac
 	})
 }
 
-func (connMulti *ConnectionMulti) EvalTyped(expr string, args interface{}, result interface{}) (err error) {
+func (connMulti *connectionMulti) EvalTyped(expr string, args interface{}, result interface{}) (err error) {
 	script, requiresWrite := connMulti.checkIfRequiresWrite(expr, true)
 
 	return connMulti.balanceTyped(requiresWrite, func(conn *tarantool.Connection) error {
@@ -411,7 +411,7 @@ func (connMulti *ConnectionMulti) EvalTyped(expr string, args interface{}, resul
 	})
 }
 
-func (connMulti *ConnectionMulti) PrepareExecuteTyped(sql string, args map[string]interface{}, result interface{}) (err error) {
+func (connMulti *connectionMulti) PrepareExecuteTyped(sql string, args map[string]interface{}, result interface{}) (err error) {
 	script, requiresWrite := connMulti.checkIfRequiresWrite(sql, true)
 
 	return connMulti.balanceTyped(requiresWrite, func(conn *tarantool.Connection) error {
@@ -421,38 +421,38 @@ func (connMulti *ConnectionMulti) PrepareExecuteTyped(sql string, args map[strin
 
 // TODO implement the same safety and retry mechanism for futures as well
 
-func (connMulti *ConnectionMulti) SelectAsync(space, index interface{}, offset, limit, iterator uint32, key interface{}) *tarantool.Future {
+func (connMulti *connectionMulti) SelectAsync(space, index interface{}, offset, limit, iterator uint32, key interface{}) *tarantool.Future {
 	return connMulti.getConnection(false).SelectAsync(space, index, offset, limit, iterator, key)
 }
 
-func (connMulti *ConnectionMulti) InsertAsync(space interface{}, tuple interface{}) *tarantool.Future {
+func (connMulti *connectionMulti) InsertAsync(space interface{}, tuple interface{}) *tarantool.Future {
 	return connMulti.getConnection(true).InsertAsync(space, tuple)
 }
 
-func (connMulti *ConnectionMulti) ReplaceAsync(space interface{}, tuple interface{}) *tarantool.Future {
+func (connMulti *connectionMulti) ReplaceAsync(space interface{}, tuple interface{}) *tarantool.Future {
 	return connMulti.getConnection(true).ReplaceAsync(space, tuple)
 }
 
-func (connMulti *ConnectionMulti) DeleteAsync(space, index interface{}, key interface{}) *tarantool.Future {
+func (connMulti *connectionMulti) DeleteAsync(space, index interface{}, key interface{}) *tarantool.Future {
 	return connMulti.getConnection(true).DeleteAsync(space, index, key)
 }
 
-func (connMulti *ConnectionMulti) UpdateAsync(space, index interface{}, key, ops interface{}) *tarantool.Future {
+func (connMulti *connectionMulti) UpdateAsync(space, index interface{}, key, ops interface{}) *tarantool.Future {
 	return connMulti.getConnection(true).UpdateAsync(space, index, key, ops)
 }
 
-func (connMulti *ConnectionMulti) UpsertAsync(space interface{}, tuple interface{}, ops interface{}) *tarantool.Future {
+func (connMulti *connectionMulti) UpsertAsync(space interface{}, tuple interface{}, ops interface{}) *tarantool.Future {
 	return connMulti.getConnection(true).UpsertAsync(space, tuple, ops)
 }
 
-func (connMulti *ConnectionMulti) CallAsync(functionName string, args interface{}) *tarantool.Future {
+func (connMulti *connectionMulti) CallAsync(functionName string, args interface{}) *tarantool.Future {
 	return connMulti.getConnection(true).CallAsync(functionName, args)
 }
 
-func (connMulti *ConnectionMulti) Call17Async(functionName string, args interface{}) *tarantool.Future {
+func (connMulti *connectionMulti) Call17Async(functionName string, args interface{}) *tarantool.Future {
 	return connMulti.getConnection(true).Call17Async(functionName, args)
 }
 
-func (connMulti *ConnectionMulti) EvalAsync(expr string, args interface{}) *tarantool.Future {
+func (connMulti *connectionMulti) EvalAsync(expr string, args interface{}) *tarantool.Future {
 	return connMulti.getConnection(true).EvalAsync(expr, args)
 }
