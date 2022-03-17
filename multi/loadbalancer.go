@@ -185,18 +185,18 @@ func (connMulti *connectionMulti) startMonitoringClusterStructureChanges() {
 			if !open || connMulti.opts.Context.Err() != nil {
 				return
 			}
-			var resp [][]map[string]string
+			var resp [][]map[string]interface{}
 			if err := connMulti.Call17Typed(connMulti.opts.NodesGetFunctionName, []interface{}{}, &resp); err == nil && len(resp) > 0 && len(resp[0]) > 0 {
 				addrs := resp[0]
 				conns := make(map[string]*loadBalancedConnection)
 				for _, r := range addrs {
-					conns[r["uri"]] = &loadBalancedConnection{
+					conns[r["uri"].(string)] = &loadBalancedConnection{
 						connMulti: connMulti,
 						mx:        new(sync.RWMutex),
 						closeMx:   new(sync.RWMutex),
 						connectMx: new(sync.Mutex),
-						_type:     clusterMemberType(r["type"]),
-						addr:      r["uri"],
+						_type:     clusterMemberType(r["type"].(string)),
+						addr:      r["uri"].(string),
 					}
 				}
 				connMulti.sync(conns)
