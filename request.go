@@ -3,6 +3,7 @@ package tarantool
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/vmihailenco/msgpack/v5"
@@ -385,7 +386,8 @@ func (conn *Connection) prepareExecute(f func(future *Future) (*Response, error)
 		})
 		r, err := f(fut)
 		if err != nil {
-			if ter, ok := err.(Error); ok && ter.Code == ER_WRONG_QUERY_ID {
+			if ter, ok := err.(Error); ok &&
+				(ter.Code == ER_WRONG_QUERY_ID || (ter.Code == ER_SQL_EXECUTE && strings.Contains(ter.Msg, "statement has expired"))) {
 				conn.cacheMx.Lock()
 				conn.sqlPreparedStatementCache.Delete(sql)
 				conn.cacheMx.Unlock()
