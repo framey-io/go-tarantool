@@ -32,6 +32,7 @@ var _ = tarantool.Connector(&connectionMulti{}) // check compatibility with conn
 type OptsMulti struct {
 	CheckTimeout         time.Duration
 	NodesGetFunctionName string
+	RequiresWrite        bool
 	Context              context.Context
 	Cancel               context.CancelFunc
 }
@@ -41,6 +42,14 @@ type BasicAuth struct {
 }
 
 func ConnectWithDefaults(ctx context.Context, cancel context.CancelFunc, auth BasicAuth, addresses ...string) (tarantool.Connector, error) {
+	return ConnectWithWritableAwareDefaults(ctx, cancel, true, auth, addresses...)
+}
+
+func ConnectToReadOnlyClusterWithDefaults(ctx context.Context, cancel context.CancelFunc, auth BasicAuth, addresses ...string) (tarantool.Connector, error) {
+	return ConnectWithWritableAwareDefaults(ctx, cancel, false, auth, addresses...)
+}
+
+func ConnectWithWritableAwareDefaults(ctx context.Context, cancel context.CancelFunc, requiresWrite bool, auth BasicAuth, addresses ...string) (tarantool.Connector, error) {
 	conOpts := tarantool.Opts{
 		Timeout:       10 * time.Second,
 		MaxReconnects: 10,
@@ -49,9 +58,10 @@ func ConnectWithDefaults(ctx context.Context, cancel context.CancelFunc, auth Ba
 		Concurrency:   128 * uint32(runtime.GOMAXPROCS(-1)),
 	}
 	conMultiOpts := OptsMulti{
-		CheckTimeout: 2 * time.Second,
-		Context:      ctx,
-		Cancel:       cancel,
+		CheckTimeout:  2 * time.Second,
+		Context:       ctx,
+		Cancel:        cancel,
+		RequiresWrite: requiresWrite,
 	}
 	return ConnectWithOpts(addresses, conOpts, conMultiOpts)
 }
@@ -109,7 +119,7 @@ func (connMulti *connectionMulti) getConnection(requiresWrite bool) *tarantool.C
 }
 
 func (connMulti *connectionMulti) ConnectedNow() bool {
-	return connMulti.getConnection(true) != nil
+	return connMulti.getConnection(connMulti.opts.RequiresWrite) != nil
 }
 
 func (connMulti *connectionMulti) Close() (err error) {
