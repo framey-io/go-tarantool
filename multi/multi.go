@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/framey-io/go-tarantool"
@@ -127,34 +128,44 @@ func (connMulti *connectionMulti) Close() (err error) {
 }
 
 func (connMulti *connectionMulti) checkIfRequiresWrite(expr string, _default bool) (string, bool) {
-	trimmedLoweredS := strings.ToLower(strings.Trim(expr, " "))
+	trimmedS := strings.TrimLeftFunc(expr, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsControl(r)
+	})
 	nonWritableTemplate := fmt.Sprintf("{{%s}}", nonWritable)
-	if isNonWritable := strings.HasPrefix(trimmedLoweredS, nonWritableTemplate); isNonWritable {
+	if isNonWritable := strings.HasPrefix(trimmedS, nonWritableTemplate); isNonWritable {
 		return strings.Replace(expr, nonWritableTemplate, "", 1), false
 	}
 
 	writableTemplate := fmt.Sprintf("{{%s}}", writable)
-	if isWritable := strings.HasPrefix(trimmedLoweredS, writableTemplate); isWritable {
+	if isWritable := strings.HasPrefix(trimmedS, writableTemplate); isWritable {
 		return strings.Replace(expr, writableTemplate, "", 1), true
 	}
 
-	if isWritable := strings.HasPrefix(trimmedLoweredS, "insert"); isWritable {
+	if isWritable := strings.HasPrefix(trimmedS, "insert"); isWritable {
 		return expr, true
 	}
 
-	if isWritable := strings.HasPrefix(trimmedLoweredS, "delete"); isWritable {
+	if isWritable := strings.HasPrefix(trimmedS, "delete"); isWritable {
 		return expr, true
 	}
 
-	if isWritable := strings.HasPrefix(trimmedLoweredS, "update"); isWritable {
+	if isWritable := strings.HasPrefix(trimmedS, "update"); isWritable {
 		return expr, true
 	}
 
-	if isNonWritable := strings.HasPrefix(trimmedLoweredS, "values"); isNonWritable {
+	if isWritable := strings.HasPrefix(trimmedS, "replace"); isWritable {
+		return expr, true
+	}
+
+	if isNonWritable := strings.HasPrefix(trimmedS, "values"); isNonWritable {
 		return expr, false
 	}
 
-	if isNonWritable := strings.HasPrefix(trimmedLoweredS, "select"); isNonWritable {
+	if isNonWritable := strings.HasPrefix(trimmedS, "with"); isNonWritable {
+		return expr, false
+	}
+
+	if isNonWritable := strings.HasPrefix(trimmedS, "select"); isNonWritable {
 		return expr, false
 	}
 
