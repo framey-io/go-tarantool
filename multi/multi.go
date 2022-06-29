@@ -128,9 +128,9 @@ func (connMulti *connectionMulti) Close() (err error) {
 }
 
 func (connMulti *connectionMulti) checkIfRequiresWrite(expr string, _default bool) (string, bool) {
-	trimmedS := strings.TrimLeftFunc(expr, func(r rune) bool {
+	trimmedS := strings.ToLower(strings.TrimLeftFunc(expr, func(r rune) bool {
 		return unicode.IsSpace(r) || unicode.IsControl(r)
-	})
+	}))
 	nonWritableTemplate := fmt.Sprintf("{{%s}}", nonWritable)
 	if isNonWritable := strings.HasPrefix(trimmedS, nonWritableTemplate); isNonWritable {
 		return strings.Replace(expr, nonWritableTemplate, "", 1), false
