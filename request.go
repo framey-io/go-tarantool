@@ -195,6 +195,13 @@ func (conn *Connection) UpdateTyped(space, index interface{}, key, ops interface
 	return conn.UpdateAsync(space, index, key, ops).GetTyped(result)
 }
 
+// UpsertTyped performs insert of a tuple or updates existing one, by tuple's primary key.
+//
+// It is equal to conn.UpsertAsync(space, tuple, ops).GetTyped(&result).
+func (conn *Connection) UpsertTyped(space, tuple, ops, result interface{}) (err error) {
+	return conn.UpsertAsync(space, tuple, ops).GetTyped(result)
+}
+
 // CallTyped calls registered function.
 // It uses request code for tarantool 1.6, so result is converted to array of arrays
 //

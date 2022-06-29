@@ -25,6 +25,7 @@ type Connector interface {
 	ReplaceTyped(space interface{}, tuple interface{}, result interface{}) (err error)
 	DeleteTyped(space, index interface{}, key interface{}, result interface{}) (err error)
 	UpdateTyped(space, index interface{}, key, ops interface{}, result interface{}) (err error)
+	UpsertTyped(space, tuple, ops, result interface{}) (err error)
 	CallTyped(functionName string, args interface{}, result interface{}) (err error)
 	Call17Typed(functionName string, args interface{}, result interface{}) (err error)
 	EvalTyped(expr string, args interface{}, result interface{}) (err error)

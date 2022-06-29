@@ -288,7 +288,7 @@ func (connMulti *connectionMulti) ConfiguredTimeout() time.Duration {
 }
 
 func (connMulti *connectionMulti) Ping() (resp *tarantool.Response, err error) {
-	return connMulti.balance(true, func(conn *tarantool.Connection) (*tarantool.Response, error) {
+	return connMulti.balance(connMulti.opts.RequiresWrite, func(conn *tarantool.Connection) (*tarantool.Response, error) {
 		return conn.Ping()
 	})
 }
@@ -397,6 +397,12 @@ func (connMulti *connectionMulti) UpdateTyped(space, index interface{}, key, ops
 	})
 }
 
+func (connMulti *connectionMulti) UpsertTyped(space, tuple, ops, result interface{}) (err error) {
+	return connMulti.balanceTyped(true, func(conn *tarantool.Connection) error {
+		return conn.UpsertTyped(space, tuple, ops, result)
+	})
+}
+
 func (connMulti *connectionMulti) CallTyped(functionName string, args interface{}, result interface{}) (err error) {
 	script, requiresWrite := connMulti.checkIfRequiresWrite(functionName, true)
 
@@ -456,13 +462,16 @@ func (connMulti *connectionMulti) UpsertAsync(space interface{}, tuple interface
 }
 
 func (connMulti *connectionMulti) CallAsync(functionName string, args interface{}) *tarantool.Future {
-	return connMulti.getConnection(true).CallAsync(functionName, args)
+	script, requiresWrite := connMulti.checkIfRequiresWrite(functionName, true)
+	return connMulti.getConnection(requiresWrite).CallAsync(script, args)
 }
 
 func (connMulti *connectionMulti) Call17Async(functionName string, args interface{}) *tarantool.Future {
-	return connMulti.getConnection(true).Call17Async(functionName, args)
+	script, requiresWrite := connMulti.checkIfRequiresWrite(functionName, true)
+	return connMulti.getConnection(requiresWrite).Call17Async(script, args)
 }
 
 func (connMulti *connectionMulti) EvalAsync(expr string, args interface{}) *tarantool.Future {
-	return connMulti.getConnection(true).EvalAsync(expr, args)
+	script, requiresWrite := connMulti.checkIfRequiresWrite(expr, true)
+	return connMulti.getConnection(requiresWrite).EvalAsync(script, args)
 }
